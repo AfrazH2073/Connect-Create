@@ -1,0 +1,26 @@
+# Netlify reads this file automatically, so whatever is in the "Build settings"
+# UI fields, these values win. See README.md for what to type in the UI anyway.
+[build]
+  publish = "public"
+  command = "echo 'No build step needed'"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# All API calls go to the single "api" function.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

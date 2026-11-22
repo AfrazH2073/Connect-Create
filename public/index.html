@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Create &amp; Connect</title>
+  <meta name="description" content="Find YouTube and Twitch creators to collab with, open lobbies for streams and videos, and get a private Discord chat + voice channel automatically." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="#/" class="brand" aria-label="Create & Connect home">
+        <img src="/favicon.svg" alt="" width="30" height="30" />
+        <span>Create <b>&amp;</b> Connect</span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#/lobbies" data-nav="lobbies">Lobbies</a>
+        <a href="#/creators" data-nav="creators">Creators</a>
+      </nav>
+      <div class="nav-right" id="nav-right"></div>
+    </div>
+  </header>
+
+  <main id="app" class="container" aria-live="polite"></main>
+
+  <footer class="footer container">
+    <span>Create &amp; Connect — a home for YouTube &amp; Twitch collabs.</span>
+    <span>Sign-in is via Discord. Lobby chats live in the Create and Connect Discord server.</span>
+  </footer>
+
+  <div id="modal-root"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

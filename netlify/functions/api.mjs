@@ -1,0 +1,556 @@
+// The whole backend API lives in this one Netlify Function.
+// netlify.toml rewrites /api/* -> this function.
+
+import { db } from '../lib/db.mjs';
+import { createSessionCookie, clearSessionCookie, readSession, parseCookies } from '../lib/session.mjs';
+import * as discord from '../lib/discord.mjs';
+import {
+  PLATFORMS, CATEGORIES, VISIBILITIES, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
+  parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
+} from '../lib/model.mjs';
+
+// ---------- helpers ----------
+
+const json = (data, status = 200, headers = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
+
+const redirect = (location, cookies = []) => {
+  const h = new Headers({ Location: location });
+  for (const c of cookies) h.append('Set-Cookie', c);
+  return new Response(null, { status: 302, headers: h });
+};
+
+const siteOrigin = (req) => process.env.SITE_URL?.replace(/\/$/, '') || new URL(req.url).origin;
+const isSecure = (req) => new URL(req.url).protocol === 'https:';
+
+async function body(req) {
+  try { return await req.json(); } catch { return {}; }
+}
+
+async function requireUser(ctx) {
+  if (!ctx.uid) fail(401, 'Please log in with Discord first');
+  const u = await db.users.get(ctx.uid);
+  if (!u) fail(401, 'Account not found — please log in again');
+  return u;
+}
+
+async function usersById(ids) {
+  const list = await Promise.all([...new Set(ids)].map((id) => db.users.get(id)));
+  return Object.fromEntries(list.filter(Boolean).map((u) => [u.id, u]));
+}
+
+// ---------- auth ----------
+
+async function login(req) {
+  if (!process.env.DISCORD_CLIENT_ID) fail(500, 'DISCORD_CLIENT_ID is not configured');
+  const state = newId();
+  const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state);
+  return redirect(url, [`cc_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure(req) ? '; Secure' : ''}`]);
+}
+
+async function callback(req) {
+  const url = new URL(req.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state || state !== parseCookies(req).cc_oauth_state) {
+    return redirect('/#/?error=login_failed');
+  }
+  const origin = siteOrigin(req);
+  let token, du;
+  try {
+    token = await discord.exchangeCode(code, `${origin}/api/auth/callback`);
+    du = await discord.fetchDiscordUser(token.access_token);
+  } catch (e) {
+    console.error(e);
+    return redirect('/#/?error=login_failed');
+  }
+  const inServer = await discord.addToGuild(du.id, token.access_token);
+
+  let user = await db.users.get(du.id);
+  const isNew = !user;
+  user ||= {
+    id: du.id, createdAt: now(), displayName: du.global_name || du.username, bio: '', lookingFor: '',
+    platforms: {}, categories: [], friendIds: [], friendRequestsIn: [], friendRequestsOut: [], onboarded: false,
+  };
+  // Always refresh from Discord: this is what makes the Discord tag "verified".
+  user.discordUsername = du.username;
+  user.discordGlobalName = du.global_name || '';
+  user.avatar = du.avatar
+    ? `https://cdn.discordapp.com/avatars/${du.id}/${du.avatar}.png?size=128`
+    : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(du.id) >> 22n) % 6n)}.png`;
+  user.inServer = inServer;
+  user.lastLoginAt = now();
+  await db.users.put(user);
+
+  return redirect(isNew || !user.onboarded ? '/#/me/edit?welcome=1' : '/#/', [
+    createSessionCookie(user.id, isSecure(req)),
+    'cc_oauth_state=; Path=/; Max-Age=0',
+  ]);
+}
+
+// ---------- me / users ----------
+
+async function getMe(ctx) {
+  if (!ctx.uid) return json({ user: null, config: clientConfig() });
+  const u = await db.users.get(ctx.uid);
+  if (!u) return json({ user: null, config: clientConfig() });
+  return json({
+    user: { ...publicUser(u), onboarded: !!u.onboarded, inServer: u.inServer, friendIds: u.friendIds, friendRequestsIn: u.friendRequestsIn, friendRequestsOut: u.friendRequestsOut },
+    config: clientConfig(),
+  });
+}
+
+function clientConfig() {
+  return {
+    categories: CATEGORIES, platforms: PLATFORMS, visibilities: VISIBILITIES,
+    discordGuildId: process.env.DISCORD_GUILD_ID || null,
+    discordInvite: process.env.DISCORD_INVITE_URL || null,
+  };
+}
+
+async function updateMe(ctx, b) {
+  const u = await requireUser(ctx);
+  u.displayName = str(b.displayName, 40) || u.discordUsername;
+  u.bio = str(b.bio, 600);
+  u.lookingFor = str(b.lookingFor, 300);
+  u.categories = pick(b.categories, CATEGORIES, 10);
+  u.platforms = {};
+  for (const p of PLATFORMS) {
+    const handle = cleanHandle(p, b.platforms?.[p]);
+    if (handle) u.platforms[p] = { handle, url: platformUrl(p, handle) };
+  }
+  if (!Object.keys(u.platforms).length) fail(400, 'Add at least one platform you create on (YouTube or Twitch)');
+  if (!u.categories.length) fail(400, 'Pick at least one content category');
+  u.onboarded = true;
+  await db.users.put(u);
+  return getMe(ctx);
+}
+
+async function listUsers(ctx, url) {
+  const q = (url.searchParams.get('q') || '').toLowerCase();
+  const cat = url.searchParams.get('category');
+  const plat = url.searchParams.get('platform');
+  let users = (await db.users.all()).filter((u) => u.onboarded);
+  if (q) users = users.filter((u) => [u.displayName, u.discordUsername, u.bio, u.lookingFor].join(' ').toLowerCase().includes(q));
+  if (cat) users = users.filter((u) => (u.categories || []).includes(cat));
+  if (plat) users = users.filter((u) => u.platforms?.[plat]);
+  users.sort((a, b) => (b.lastLoginAt || '').localeCompare(a.lastLoginAt || ''));
+  return json({ users: users.slice(0, 200).map(publicUser) });
+}
+
+async function getUser(ctx, id) {
+  const u = await db.users.get(id);
+  if (!u || !u.onboarded) fail(404, 'Creator not found');
+  const clips = (await db.clips.all()).filter(
+    (c) => c.ownerId === id || c.collaborators.some((x) => x.id === id && x.status === 'confirmed')
+  );
+  clips.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const people = await usersById(clips.flatMap((c) => [c.ownerId, ...c.collaborators.map((x) => x.id)]));
+  let friendStatus = 'none';
+  if (ctx.uid === id) friendStatus = 'self';
+  else if (ctx.uid && u.friendIds.includes(ctx.uid)) friendStatus = 'friends';
+  else if (ctx.uid && u.friendRequestsIn.includes(ctx.uid)) friendStatus = 'requested';
+  else if (ctx.uid && u.friendRequestsOut.includes(ctx.uid)) friendStatus = 'incoming';
+
+  // Lobbies this creator hosts that the viewer may see
+  const lobbies = (await db.lobbies.all()).filter(
+    (l) => l.hostId === id && l.status === 'open' && canView(l, ctx.uid, u)
+  );
+  return json({
+    user: publicUser(u),
+    friendStatus,
+    clips: clips.map((c) => clipView(c, people)),
+    lobbies: lobbies.map((l) => lobbySummary(l, { [u.id]: u })),
+  });
+}
+
+// ---------- friends ----------
+
+async function friendAction(ctx, targetId, action) {
+  const me = await requireUser(ctx);
+  if (targetId === me.id) fail(400, "You can't friend yourself");
+  const them = await db.users.get(targetId);
+  if (!them) fail(404, 'Creator not found');
+  const rm = (arr, x) => arr.filter((y) => y !== x);
+  const add = (arr, x) => (arr.includes(x) ? arr : [...arr, x]);
+
+  if (action === 'request') {
+    if (me.friendIds.includes(them.id)) fail(400, 'Already friends');
+    if (me.friendRequestsIn.includes(them.id)) action = 'accept'; // they already asked you
+    else {
+      me.friendRequestsOut = add(me.friendRequestsOut, them.id);
+      them.friendRequestsIn = add(them.friendRequestsIn, me.id);
+    }
+  }
+  if (action === 'accept') {
+    if (!me.friendRequestsIn.includes(them.id)) fail(400, 'No friend request from this creator');
+    me.friendRequestsIn = rm(me.friendRequestsIn, them.id);
+    them.friendRequestsOut = rm(them.friendRequestsOut, me.id);
+    me.friendIds = add(me.friendIds, them.id);
+    them.friendIds = add(them.friendIds, me.id);
+  }
+  if (action === 'remove') {
+    // unfriend, cancel your request, or decline theirs
+    me.friendIds = rm(me.friendIds, them.id);
+    them.friendIds = rm(them.friendIds, me.id);
+    me.friendRequestsIn = rm(me.friendRequestsIn, them.id);
+    me.friendRequestsOut = rm(me.friendRequestsOut, them.id);
+    them.friendRequestsIn = rm(them.friendRequestsIn, me.id);
+    them.friendRequestsOut = rm(them.friendRequestsOut, me.id);
+  }
+  await Promise.all([db.users.put(me), db.users.put(them)]);
+  return json({ ok: true });
+}
+
+async function listFriends(ctx) {
+  const me = await requireUser(ctx);
+  const people = await usersById([...me.friendIds, ...me.friendRequestsIn, ...me.friendRequestsOut]);
+  const map = (ids) => ids.map((id) => publicUser(people[id])).filter(Boolean);
+  return json({ friends: map(me.friendIds), incoming: map(me.friendRequestsIn), outgoing: map(me.friendRequestsOut) });
+}
+
+// ---------- collab showcase (clips) ----------
+
+function clipView(c, people) {
+  return {
+    ...c,
+    owner: miniUser(people[c.ownerId]),
+    collaborators: c.collaborators.map((x) => ({ ...x, user: miniUser(people[x.id]) })).filter((x) => x.user),
+  };
+}
+
+async function createClip(ctx, b) {
+  const me = await requireUser(ctx);
+  if (b.attest !== true) fail(400, 'You must confirm you own this content or have explicit permission from the owner');
+  const url = str(b.url, 500, { required: true, name: 'Link' });
+  const media = parseMedia(url);
+  if (!media) fail(400, 'Paste a YouTube video/stream link or a Twitch VOD/clip link');
+  const collaborators = idList(b.collaboratorIds, 12).filter((id) => id !== me.id);
+  const exist = await usersById(collaborators);
+  const clip = {
+    id: newId(), ownerId: me.id, url, ...media,
+    title: str(b.title, 120, { required: true, name: 'Title' }),
+    description: str(b.description, 500),
+    ownership: b.ownership === 'permission' ? 'permission' : 'owner',
+    collaborators: collaborators.filter((id) => exist[id]).map((id) => ({ id, status: 'pending' })),
+    createdAt: now(),
+  };
+  await db.clips.put(clip);
+  return json({ clip }, 201);
+}
+
+async function clipAction(ctx, id, action) {
+  const me = await requireUser(ctx);
+  const clip = await db.clips.get(id);
+  if (!clip) fail(404, 'Not found');
+  if (action === 'delete') {
+    if (clip.ownerId !== me.id) fail(403, 'Only the person who added this can delete it');
+    await db.clips.del(id);
+    return json({ ok: true });
+  }
+  const tag = clip.collaborators.find((x) => x.id === me.id);
+  if (!tag) fail(403, "You're not tagged on this");
+  if (action === 'confirm') tag.status = 'confirmed';
+  if (action === 'untag') clip.collaborators = clip.collaborators.filter((x) => x.id !== me.id);
+  await db.clips.put(clip);
+  return json({ ok: true });
+}
+
+// ---------- lobbies ----------
+
+function lobbySummary(l, people) {
+  return {
+    id: l.id, title: l.title, game: l.game, description: l.description.slice(0, 220), categories: l.categories,
+    platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility,
+    status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
+  };
+}
+
+function lobbyDetail(l, uid, people) {
+  const manager = isManager(l, uid);
+  const member = isMember(l, uid);
+  const out = {
+    ...lobbySummary(l, people),
+    description: l.description,
+    hostId: l.hostId,
+    coHosts: l.coHostIds.map((id) => miniUser(people[id])).filter(Boolean),
+    members: l.memberIds.map((id) => miniUser(people[id])).filter(Boolean),
+    completedAt: l.completedAt,
+    me: {
+      isHost: l.hostId === uid, isManager: manager, isMember: member,
+      requested: !!uid && l.requestIds.includes(uid), invited: !!uid && l.invitedIds.includes(uid),
+    },
+    requestCount: l.requestIds.length,
+  };
+  if (manager) {
+    out.code = l.visibility === 'code' ? l.code : null;
+    out.requests = l.requestIds.map((id) => miniUser(people[id])).filter(Boolean);
+    out.invited = l.invitedIds.map((id) => miniUser(people[id])).filter(Boolean);
+  }
+  if (member || manager) {
+    const d = l.discord || {};
+    out.discord = {
+      configured: discord.discordConfigured(),
+      textUrl: d.textId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.textId}` : null,
+      voiceUrl: d.voiceId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.voiceId}` : null,
+      deletedAt: d.deletedAt || null,
+      error: d.error || null,
+      missingAccess: (d.failedIds || []).map((id) => miniUser(people[id])).filter(Boolean),
+    };
+  }
+  return out;
+}
+
+function readLobbyFields(b, existing) {
+  const visibility = VISIBILITIES.includes(b.visibility) ? b.visibility : existing?.visibility || 'public';
+  const maxSlots = Math.max(2, Math.min(100, parseInt(b.maxSlots, 10) || existing?.maxSlots || 4));
+  let scheduledAt = null;
+  if (b.scheduledAt) {
+    const d = new Date(b.scheduledAt);
+    if (!isNaN(d)) scheduledAt = d.toISOString();
+  }
+  return {
+    title: str(b.title, 80, { required: true, name: 'Title' }),
+    game: str(b.game, 80),
+    description: str(b.description, 2000),
+    categories: pick(b.categories, CATEGORIES, 6),
+    platforms: pick(b.platforms, PLATFORMS),
+    scheduledAt,
+    maxSlots,
+    visibility,
+  };
+}
+
+async function loadLobby(ctx, id) {
+  const l = await db.lobbies.get(id);
+  if (!l) fail(404, 'Lobby not found');
+  const host = await db.users.get(l.hostId);
+  if (!canView(l, ctx.uid, host)) fail(404, 'Lobby not found');
+  return { l, host };
+}
+
+async function saveAndRespond(ctx, req, l, { sync = true } = {}) {
+  if (sync) await discord.syncLobbyChannels(l, siteOrigin(req));
+  l.updatedAt = now();
+  await db.lobbies.put(l);
+  return renderLobby(ctx, l);
+}
+
+async function renderLobby(ctx, l) {
+  const people = await usersById([l.hostId, ...l.coHostIds, ...l.memberIds, ...l.requestIds, ...l.invitedIds, ...(l.discord?.failedIds || [])]);
+  return json({ lobby: lobbyDetail(l, ctx.uid, people) });
+}
+
+async function listLobbies(ctx, url) {
+  const q = (url.searchParams.get('q') || '').toLowerCase();
+  const cat = url.searchParams.get('category');
+  const plat = url.searchParams.get('platform');
+  const status = url.searchParams.get('status') || 'open';
+  const mine = url.searchParams.get('mine') === '1';
+  const all = await db.lobbies.all();
+  const hosts = await usersById(all.map((l) => l.hostId));
+  let lobbies = all.filter((l) => canView(l, ctx.uid, hosts[l.hostId]));
+  if (mine) lobbies = lobbies.filter((l) => isMember(l, ctx.uid) || isManager(l, ctx.uid) || l.requestIds.includes(ctx.uid));
+  else lobbies = lobbies.filter((l) => l.status === status);
+  if (q) lobbies = lobbies.filter((l) => [l.title, l.game, l.description].join(' ').toLowerCase().includes(q));
+  if (cat) lobbies = lobbies.filter((l) => l.categories.includes(cat));
+  if (plat) lobbies = lobbies.filter((l) => l.platforms.includes(plat));
+  lobbies.sort((a, b) => (a.scheduledAt || a.createdAt).localeCompare(b.scheduledAt || b.createdAt));
+  return json({ lobbies: lobbies.slice(0, 200).map((l) => lobbySummary(l, hosts)) });
+}
+
+async function createLobby(ctx, req, b) {
+  const me = await requireUser(ctx);
+  if (!me.onboarded) fail(400, 'Finish your profile before creating a lobby');
+  const fields = readLobbyFields(b);
+  const l = {
+    id: newId(), ...fields, hostId: me.id, coHostIds: [], memberIds: [me.id], requestIds: [],
+    invitedIds: [], code: newCode(), status: 'open', createdAt: now(), updatedAt: now(), discord: {},
+  };
+  l.coHostIds = idList(b.coHostIds, 5).filter((id) => id !== me.id);
+  l.invitedIds = idList(b.invitedIds, 100).filter((id) => id !== me.id);
+  return saveAndRespond(ctx, req, l);
+}
+
+async function lobbyAction(ctx, req, id, action, arg, b) {
+  const { l, host } = await loadLobby(ctx, id);
+  if (action === '' && req.method === 'GET') return renderLobby(ctx, l);
+
+  const me = await requireUser(ctx);
+  const manager = isManager(l, me.id);
+  const isHost = l.hostId === me.id;
+  const needManager = () => { if (!manager) fail(403, 'Only the host or co-hosts can do that'); };
+  const needOpen = () => { if (l.status !== 'open') fail(400, 'This lobby is no longer open'); };
+  const hasRoom = () => l.memberIds.length < l.maxSlots;
+  const removeFrom = (key, uid) => { l[key] = l[key].filter((x) => x !== uid); };
+
+  switch (`${req.method} ${action}`) {
+    case 'PUT ': {
+      needManager();
+      const fields = readLobbyFields(b, l);
+      if (fields.maxSlots < l.memberIds.length) fail(400, `There are already ${l.memberIds.length} people in this lobby`);
+      if (fields.visibility === 'code' && l.visibility !== 'code') l.code = newCode();
+      Object.assign(l, fields);
+      if (isHost && Array.isArray(b.coHostIds)) l.coHostIds = idList(b.coHostIds, 5).filter((x) => x !== l.hostId);
+      break;
+    }
+    case 'POST join': {
+      needOpen();
+      if (isMember(l, me.id)) fail(400, "You're already in this lobby");
+      if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
+      const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
+      if (manager || l.invitedIds.includes(me.id)) direct();
+      else if (l.visibility === 'public') direct();
+      else if (l.visibility === 'friends') direct(); // canView already checked friendship
+      else if (l.visibility === 'code') {
+        if (String(b.code || '').trim() !== l.code) fail(403, 'Wrong code');
+        direct();
+      } else if (l.visibility === 'approval') {
+        if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id);
+      } else fail(403, 'You need an invite to join this lobby');
+      break;
+    }
+    case 'POST leave': {
+      if (isHost) fail(400, 'The host cannot leave — mark the lobby completed or cancel it instead');
+      removeFrom('memberIds', me.id);
+      removeFrom('requestIds', me.id);
+      removeFrom('coHostIds', me.id);
+      break;
+    }
+    case 'POST approve': {
+      needManager(); needOpen();
+      if (!l.requestIds.includes(arg)) fail(404, 'No such request');
+      if (!hasRoom()) fail(400, 'Lobby is full — raise the slot count first');
+      removeFrom('requestIds', arg);
+      l.memberIds.push(arg);
+      break;
+    }
+    case 'POST deny': {
+      needManager();
+      removeFrom('requestIds', arg);
+      break;
+    }
+    case 'POST kick': {
+      needManager();
+      if (arg === l.hostId) fail(400, "Can't remove the host");
+      if (l.coHostIds.includes(arg) && !isHost) fail(403, 'Only the host can remove a co-host');
+      removeFrom('memberIds', arg);
+      removeFrom('coHostIds', arg);
+      removeFrom('invitedIds', arg);
+      break;
+    }
+    case 'POST invite': {
+      needManager();
+      const ids = idList(b.userIds, 50);
+      const found = await usersById(ids);
+      for (const uid of ids) if (found[uid] && !l.invitedIds.includes(uid) && !l.memberIds.includes(uid)) l.invitedIds.push(uid);
+      break;
+    }
+    case 'POST uninvite': {
+      needManager();
+      removeFrom('invitedIds', arg);
+      break;
+    }
+    case 'POST decline-invite': {
+      removeFrom('invitedIds', me.id);
+      break;
+    }
+    case 'POST regenerate-code': {
+      needManager();
+      l.code = newCode();
+      return saveAndRespond(ctx, req, l, { sync: false });
+    }
+    case 'POST complete': {
+      needManager();
+      l.status = 'completed';
+      l.completedAt = now();
+      await discord.postToLobby(l, '✅ This lobby was marked **completed** on Create & Connect. These channels will be deleted automatically in 14 days. GG!');
+      return saveAndRespond(ctx, req, l, { sync: false });
+    }
+    case 'POST reopen': {
+      needManager();
+      if (l.discord?.deletedAt) fail(400, 'Discord channels were already deleted — create a new lobby instead');
+      l.status = 'open';
+      l.completedAt = null;
+      break;
+    }
+    case 'DELETE ': {
+      if (!isHost) fail(403, 'Only the host can cancel the lobby');
+      await discord.deleteLobbyChannels(l);
+      l.status = 'cancelled';
+      l.updatedAt = now();
+      await db.lobbies.put(l);
+      return json({ ok: true });
+    }
+    default:
+      fail(404, 'Unknown lobby action');
+  }
+  return saveAndRespond(ctx, req, l);
+}
+
+// ---------- inbox ----------
+
+async function inbox(ctx) {
+  const me = await requireUser(ctx);
+  const [lobbies, clips] = await Promise.all([db.lobbies.all(), db.clips.all()]);
+  const invites = lobbies.filter((l) => l.status === 'open' && l.invitedIds.includes(me.id) && !l.memberIds.includes(me.id));
+  const approvals = lobbies.filter((l) => l.status === 'open' && isManager(l, me.id) && l.requestIds.length);
+  const tags = clips.filter((c) => c.collaborators.some((x) => x.id === me.id && x.status === 'pending'));
+  const people = await usersById([
+    ...me.friendRequestsIn, ...invites.map((l) => l.hostId), ...approvals.flatMap((l) => [l.hostId, ...l.requestIds]),
+    ...tags.flatMap((c) => [c.ownerId, ...c.collaborators.map((x) => x.id)]),
+  ]);
+  return json({
+    friendRequests: me.friendRequestsIn.map((id) => publicUser(people[id])).filter(Boolean),
+    invites: invites.map((l) => lobbySummary(l, people)),
+    approvals: approvals.map((l) => ({ lobby: lobbySummary(l, people), requests: l.requestIds.map((id) => miniUser(people[id])).filter(Boolean) })),
+    tags: tags.map((c) => clipView(c, people)),
+  });
+}
+
+// ---------- router ----------
+
+export default async (req) => {
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^\/\.netlify\/functions\/api/, '').replace(/^\/api/, '').replace(/\/+$/, '') || '/';
+  const seg = path.split('/').filter(Boolean);
+  const m = req.method;
+
+  try {
+    // CSRF guard: state-changing calls must be JSON (cross-site forms can't send that without CORS).
+    if (m !== 'GET' && m !== 'HEAD' && !(req.headers.get('content-type') || '').includes('application/json')) {
+      fail(415, 'Expected application/json');
+    }
+    const ctx = { uid: readSession(req) };
+    const b = m === 'GET' ? {} : await body(req);
+
+    if (path === '/auth/login' && m === 'GET') return await login(req);
+    if (path === '/auth/callback' && m === 'GET') return await callback(req);
+    if (path === '/auth/logout' && m === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': clearSessionCookie() });
+
+    if (path === '/me' && m === 'GET') return await getMe(ctx);
+    if (path === '/me' && m === 'PUT') return await updateMe(ctx, b);
+    if (path === '/inbox' && m === 'GET') return await inbox(ctx);
+
+    if (path === '/users' && m === 'GET') return await listUsers(ctx, url);
+    if (seg[0] === 'users' && seg[1] && m === 'GET') return await getUser(ctx, seg[1]);
+
+    if (path === '/friends' && m === 'GET') return await listFriends(ctx);
+    if (seg[0] === 'friends' && seg[1] && m === 'POST' && ['request', 'accept'].includes(seg[2])) return await friendAction(ctx, seg[1], seg[2]);
+    if (seg[0] === 'friends' && seg[1] && m === 'DELETE') return await friendAction(ctx, seg[1], 'remove');
+
+    if (path === '/clips' && m === 'POST') return await createClip(ctx, b);
+    if (seg[0] === 'clips' && seg[1] && m === 'DELETE') return await clipAction(ctx, seg[1], 'delete');
+    if (seg[0] === 'clips' && seg[1] && m === 'POST' && ['confirm', 'untag'].includes(seg[2])) return await clipAction(ctx, seg[1], seg[2]);
+
+    if (path === '/lobbies' && m === 'GET') return await listLobbies(ctx, url);
+    if (path === '/lobbies' && m === 'POST') return await createLobby(ctx, req, b);
+    if (seg[0] === 'lobbies' && seg[1]) return await lobbyAction(ctx, req, seg[1], seg[2] || '', seg[3], b);
+
+    fail(404, 'Not found');
+  } catch (e) {
+    if (e instanceof HttpError) return json({ error: e.message }, e.status);
+    console.error(e);
+    return json({ error: 'Something went wrong on our side' }, 500);
+  }
+};

@@ -1,0 +1,18 @@
+{
+  "name": "create-and-connect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Create & Connect — find creators to collab with, run lobbies, and get private Discord channels automatically.",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "dev:local": "node scripts/dev-server.mjs",
+    "test": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^11.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
