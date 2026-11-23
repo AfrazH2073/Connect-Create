@@ -37,7 +37,8 @@ async function bot(method, path, body) {
       headers: {
         Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'CreateAndConnectBot (https://netlify.app, 1.0)',
+        // Discord requires bot User-Agents in exactly this "DiscordBot (url, version)" form.
+        'User-Agent': 'DiscordBot (https://createconnect.netlify.app, 1.0)',
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -51,11 +52,25 @@ async function bot(method, path, body) {
     if (!res.ok) {
       const err = new Error(`Discord ${method} ${path} -> ${res.status}: ${JSON.stringify(data)}`);
       err.status = res.status;
+      err.code = data?.code;
+      err.data = data;
       throw err;
     }
     return data;
   }
   throw new Error(`Discord ${method} ${path} rate limited`);
+}
+
+/** Turn a Discord API error into a setup hint a host can act on. */
+export function explainDiscordError(e) {
+  const raw = JSON.stringify(e.data || {});
+  if (e.status === 401) return 'Discord rejected the bot token. Copy a fresh token (Developer Portal → Bot → Reset Token), update DISCORD_BOT_TOKEN in Netlify, and redeploy.';
+  if (e.code === 10004 || (e.status === 404 && /guild/i.test(raw))) return 'Discord says that server doesn\'t exist for this bot. Check DISCORD_GUILD_ID in Netlify and that the bot was added to the Create and Connect server.';
+  if (e.code === 50001) return 'The bot is missing access. Make sure it is in the Create and Connect server (and can see the lobby category, if DISCORD_CATEGORY_ID is set).';
+  if (e.code === 50013) return 'The bot is missing permissions. In Discord: Server Settings → Roles → the bot\'s role → turn on Administrator.';
+  if (e.status === 400 && /parent_id/.test(raw)) return 'DISCORD_CATEGORY_ID is not a category in this server. Fix it in Netlify (or delete it) and redeploy.';
+  if (e.status === 403 && !e.code) return 'Discord blocked the request (HTTP 403). This is usually temporary — try again in a minute.';
+  return `Discord error ${e.status || ''}${e.code ? ` (code ${e.code})` : ''}: ${e.data?.message || e.message}`.trim();
 }
 
 // ---------- OAuth (login + verification) ----------
@@ -141,30 +156,29 @@ export async function syncLobbyChannels(lobby, siteUrl) {
 
   const guild = process.env.DISCORD_GUILD_ID;
   try {
+    const base = {
+      parent_id: process.env.DISCORD_CATEGORY_ID || undefined,
+      permission_overwrites: [
+        { id: guild, type: 0, allow: '0', deny: String(P.VIEW_CHANNEL) }, // hide from @everyone
+        { id: process.env.DISCORD_CLIENT_ID, type: 1, allow: BOT_ALLOW, deny: '0' }, // keep bot access
+      ],
+    };
+    // Each ID is saved as soon as it exists, so a failure halfway never leaves an orphan channel.
     if (!d.textId) {
-      const base = {
-        parent_id: process.env.DISCORD_CATEGORY_ID || undefined,
-        permission_overwrites: [
-          { id: guild, type: 0, allow: '0', deny: String(P.VIEW_CHANNEL) }, // hide from @everyone
-          { id: process.env.DISCORD_CLIENT_ID, type: 1, allow: BOT_ALLOW, deny: '0' }, // keep bot access
-        ],
-      };
-      const slug = channelSlug(lobby.title);
       const text = await bot('POST', `/guilds/${guild}/channels`, {
         ...base,
-        name: slug,
+        name: channelSlug(lobby.title),
         type: 0,
         topic: `Create & Connect lobby: ${lobby.title} — ${siteUrl}/#/lobbies/${lobby.id}`.slice(0, 1024),
       });
-      const voice = await bot('POST', `/guilds/${guild}/channels`, {
-        ...base,
-        name: `🔊 ${lobby.title}`.slice(0, 100),
-        type: 2,
-      });
       d.textId = text.id;
-      d.voiceId = voice.id;
       d.memberIds = [];
       d.createdAt = new Date().toISOString();
+    }
+    if (!d.voiceId) {
+      const voice = await bot('POST', `/guilds/${guild}/channels`, { ...base, name: `🔊 ${lobby.title}`.slice(0, 100), type: 2 });
+      d.voiceId = voice.id;
+      d.memberIds = []; // re-apply member access to both channels
     }
 
     const want = new Set(memberIds);
@@ -201,7 +215,7 @@ export async function syncLobbyChannels(lobby, siteUrl) {
     }
   } catch (e) {
     console.error('syncLobbyChannels failed', e.message);
-    d.error = 'Could not update Discord channels. They will retry on the next lobby change.';
+    d.error = explainDiscordError(e);
   }
   return d;
 }

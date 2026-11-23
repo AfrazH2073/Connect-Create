@@ -578,7 +578,8 @@ async function viewLobby(id) {
       ${l.status === 'completed' ? '<p class="hint" style="margin:10px 0 0">Channels are deleted 14 days after the lobby was completed.</p>' : ''}
       ${dc.missingAccess.length ? `<p class="hint" style="margin:10px 0 0">⚠️ Couldn't add ${dc.missingAccess.map((u) => esc(u.displayName)).join(', ')} — they need to join the Discord server (log out &amp; back in here).</p>` : ''}`;
     else inner = '<p class="muted" style="margin:0">A private text + voice channel opens automatically once 2 or more people are in the lobby.</p>';
-    return `<div class="card discord-panel"><h2 class="row" style="gap:8px">${ICON.discord} Discord</h2>${inner}${dc.error ? `<p class="hint" style="color:var(--warn)">${esc(dc.error)}</p>` : ''}</div>`;
+    const err = dc.error ? `<div class="notice warn" style="margin-top:12px">${esc(dc.error)}</div>${me.isManager ? '<button class="btn sm" id="sync-discord" style="margin-top:10px">↻ Retry Discord setup</button>' : ''}` : '';
+    return `<div class="card discord-panel"><h2 class="row" style="gap:8px">${ICON.discord} Discord</h2>${inner}${err}</div>`;
   }
 
   function managerBox() {
@@ -637,6 +638,11 @@ async function viewLobby(id) {
     on('#join', async () => { const r = await api('POST', `${base}/join`); toast(r.lobby.me.isMember ? 'Joined!' : 'Request sent'); refreshInboxCount().then(() => renderNav(currentRoute)); return r; });
     on('#leave', () => api('POST', `${base}/leave`));
     on('#decline', async () => { await api('POST', `${base}/decline-invite`); location.hash = '#/inbox'; });
+    on('#sync-discord', async () => {
+      const r = await api('POST', `${base}/sync-discord`);
+      toast(r.lobby.discord?.error ? 'Still failing — see the message' : 'Discord channels are set up!', !!r.lobby.discord?.error);
+      return r;
+    });
     on('#regen', async () => { const r = await api('POST', `${base}/regenerate-code`); toast('New code generated'); return r; });
     on('#complete', async () => { if (!confirm('Mark this lobby as completed? Its Discord channels will be deleted in 14 days.')) return; return api('POST', `${base}/complete`); });
     on('#reopen', () => api('POST', `${base}/reopen`));

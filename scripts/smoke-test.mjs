@@ -19,6 +19,7 @@ globalThis.fetch = async (url, opts = {}) => {
   calls.push(`${method} ${u.pathname}`);
   const reply = (status, data) => new Response(data ? JSON.stringify(data) : null, { status });
   let m;
+  if (globalThis.failVoice && method === 'POST' && body?.type === 2) return reply(403, { message: 'Missing Permissions', code: 50013 });
   if (method === 'POST' && /\/guilds\/\d+\/channels$/.test(u.pathname)) {
     const id = String(800000000000000000n + BigInt(chanSeq++));
     channels.set(id, { ...body, overwrites: new Map() });
@@ -185,6 +186,24 @@ await test('cancelled lobby deletes channels immediately and disappears', async 
   await host.call('DELETE', `/lobbies/${lobby.id}`);
   assert.ok(!channels.has(textId));
   assert.equal((await alice.call('GET', `/lobbies/${lobby.id}`)).status, 404);
+});
+
+await test('Discord failure shows host a fix, keeps half-made channel, retry finishes it', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Flaky', visibility: 'public' });
+  globalThis.failVoice = true;
+  const before = channels.size;
+  const j = await alice.call('POST', `/lobbies/${lobby.id}/join`);
+  assert.equal(channels.size, before + 1, 'text channel created, voice failed');
+  assert.match(j.lobby.discord.error, /host/, 'member sees a generic message');
+  const h = await host.call('GET', `/lobbies/${lobby.id}`);
+  assert.match(h.lobby.discord.error, /Administrator/, 'host sees the actual fix');
+  globalThis.failVoice = false;
+  const r = await host.call('POST', `/lobbies/${lobby.id}/sync-discord`);
+  assert.equal(r.lobby.discord.error, null);
+  assert.equal(channels.size, before + 2, 'retry adds only the voice channel (no duplicate text)');
+  const voiceId = r.lobby.discord.voiceUrl.split('/').pop();
+  assert.ok(channels.get(voiceId).overwrites.has(alice.id), 'members get access to the new voice channel');
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/sync-discord`)).status, 403, 'only hosts can retry');
 });
 
 await test('switch accounts: only accounts signed in on this browser', async () => {

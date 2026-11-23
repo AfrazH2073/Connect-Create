@@ -336,7 +336,8 @@ function lobbyDetail(l, uid, people) {
       textUrl: d.textId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.textId}` : null,
       voiceUrl: d.voiceId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.voiceId}` : null,
       deletedAt: d.deletedAt || null,
-      error: d.error || null,
+      // Hosts get the exact fix; members just learn something is wrong.
+      error: d.error ? (manager ? d.error : 'The Discord channels could not be set up yet. The host has been shown how to fix it.') : null,
       missingAccess: (d.failedIds || []).map((id) => miniUser(people[id])).filter(Boolean),
     };
   }
@@ -496,6 +497,10 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     case 'POST decline-invite': {
       removeFrom('invitedIds', me.id);
       break;
+    }
+    case 'POST sync-discord': {
+      needManager();
+      break; // falls through to saveAndRespond, which re-runs the Discord sync
     }
     case 'POST regenerate-code': {
       needManager();
