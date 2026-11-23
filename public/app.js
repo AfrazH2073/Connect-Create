@@ -71,6 +71,12 @@ const userLine = (u, size = 34, extra = '') => u ? `
   <a class="user-line" href="#/u/${esc(u.id)}">${avatar(u, size)}
     <div class="names"><div><strong>${esc(u.displayName)}</strong> ${extra}</div><div class="handle">@${esc(u.discordUsername)}</div></div>
   </a>` : '';
+// Same look as userLine but not a link — for use inside cards that are already links
+// (a link inside a link makes the browser split the card in two).
+const userLabel = (u, size = 34) => u ? `
+  <div class="user-line">${avatar(u, size)}
+    <div class="names"><div><strong>${esc(u.displayName)}</strong></div><div class="handle">@${esc(u.discordUsername)}</div></div>
+  </div>` : '';
 const visTag = (v) => `<span class="tag ${esc(v)}">${esc(VIS[v]?.label || v)}</span>`;
 const platformChips = (ps) => (ps || []).map((p) => `<span class="chip ${p === 'youtube' ? 'yt' : 'tw'}">${ICON[p] || ''}${p === 'youtube' ? 'YouTube' : 'Twitch'}</span>`).join('');
 const catChips = (cs) => (cs || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('');
@@ -220,7 +226,7 @@ function lobbyCard(l) {
     <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3></div>
     ${l.description ? `<p class="desc">${esc(l.description)}</p>` : ''}
     <div class="chips">${platformChips(l.platforms)}${catChips(l.categories)}</div>
-    <div class="foot">${userLine(l.host, 26)}<span class="slots">${l.memberCount}/${l.maxSlots}<span class="slot-bar"><i style="width:${pct}%"></i></span></span></div>
+    <div class="foot">${userLabel(l.host, 26)}<span class="slots">${l.memberCount}/${l.maxSlots}<span class="slot-bar"><i style="width:${pct}%"></i></span></span></div>
   </a>`;
 }
 
