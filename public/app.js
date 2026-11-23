@@ -297,7 +297,16 @@ async function viewLobbies(params) {
   const status = params.get('status') || 'open';
   const mine = params.get('mine') === '1';
   $app.innerHTML = `
-    <div class="page-head"><div><h1>Lobbies</h1><p>Streams, videos and collabs looking for creators.</p></div>${state.me ? '<a class="btn primary" href="#/lobbies/new">+ Create lobby</a>' : loginBtn('Log in to create')}</div>
+    <div class="page-head"><div><h1>Lobbies</h1><p>Streams, videos and collabs looking for creators.</p></div>
+      <div class="row">
+        <form class="code-find" id="codefind" aria-label="Find a lobby by code">
+          <label for="cf-code">Have a code?</label>
+          <input id="cf-code" name="code" type="text" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required autocomplete="off" />
+          <button class="btn sm">Go</button>
+        </form>
+        ${state.me ? '<a class="btn primary" href="#/lobbies/new">+ Create lobby</a>' : loginBtn('Log in to create')}
+      </div>
+    </div>
     <div class="tabs">
       <a href="#/lobbies" class="${!mine && status === 'open' ? 'active' : ''}">Open</a>
       <a href="#/lobbies?status=completed" class="${!mine && status === 'completed' ? 'active' : ''}">Completed</a>
@@ -308,12 +317,45 @@ async function viewLobbies(params) {
       <select name="category"><option value="">All categories</option>${state.config.categories.map((c) => `<option ${params.get('category') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
       <select name="platform"><option value="">All platforms</option><option value="youtube" ${params.get('platform') === 'youtube' ? 'selected' : ''}>YouTube</option><option value="twitch" ${params.get('platform') === 'twitch' ? 'selected' : ''}>Twitch</option></select>
     </form>
+    <div class="row vis-filter" style="margin:-8px 0 20px">
+      <span class="hint">Lobby type:</span>
+      <div class="chips" id="visf">${Object.entries(VIS)
+        .filter(([k]) => state.me || ['public', 'approval', 'code'].includes(k)) // private/friends lobbies are only visible when logged in
+        .map(([k, o]) => `<button type="button" class="chip" data-vis="${k}" aria-pressed="false" title="${esc(o.desc)}">${o.label}</button>`).join('')}</div>
+      <button type="button" class="btn ghost sm" id="vis-clear" hidden>Show all types</button>
+    </div>
     <div id="list"><div class="loading">Loading…</div></div>`;
   const form = document.getElementById('f');
+  const visBtns = [...document.querySelectorAll('#visf .chip')];
+  const clearBtn = document.getElementById('vis-clear');
+  visBtns.forEach((b) => b.addEventListener('click', () => {
+    b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on'));
+    load();
+  }));
+  clearBtn.addEventListener('click', () => { visBtns.forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); }); load(); });
+
+  const codeForm = document.getElementById('codefind');
+  codeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!state.me) { toast('Log in with Discord to use a lobby code', true); return; }
+    const code = codeForm.code.value.trim();
+    const btn = codeForm.querySelector('button');
+    btn.disabled = true;
+    try {
+      const { id } = await api('POST', '/lobby-code', { code });
+      state.pendingCode = { id, code }; // pre-fills the join box on the lobby page
+      location.hash = `#/lobbies/${id}`;
+    } catch (err) { toast(err.message, true); } finally { btn.disabled = false; }
+  });
+
   const load = async () => {
     const fd = new FormData(form);
     const qs = new URLSearchParams({ status, ...(mine ? { mine: '1' } : {}) });
     for (const [k, v] of fd) if (v) qs.set(k, v);
+    const vis = visBtns.filter((b) => b.classList.contains('on')).map((b) => b.dataset.vis);
+    if (vis.length) qs.set('visibility', vis.join(','));
+    clearBtn.hidden = !vis.length;
     const { lobbies } = await api('GET', `/lobbies?${qs}`);
     document.getElementById('list').innerHTML = lobbies.length ? `<div class="cards">${lobbies.map(lobbyCard).join('')}</div>` : '<div class="empty">No lobbies match. Try different filters — or create one!</div>';
   };
@@ -597,7 +639,10 @@ async function viewLobby(id) {
     if (me.invited) return `<div class="notice ok">You were invited!</div><div class="row" style="margin-top:12px"><button class="btn primary" id="join">Join lobby</button><button class="btn ghost sm" id="decline">Decline</button></div>`;
     switch (l.visibility) {
       case 'approval': return `<p class="muted">The host approves who gets a slot.</p><button class="btn primary" id="join">Request to join</button>`;
-      case 'code': return `<p class="muted">Enter the 4-digit code from the host.</p><form class="row" id="codef"><input type="text" name="code" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required style="width:110px;letter-spacing:.3em;text-align:center;font-weight:700" /><button class="btn primary">Join</button></form>`;
+      case 'code': {
+        const pre = state.pendingCode?.id === l.id ? state.pendingCode.code : '';
+        return `<p class="muted">${pre ? 'Code found — hit Join to take a slot.' : 'Enter the 4-digit code from the host.'}</p><form class="row" id="codef"><input type="text" name="code" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required value="${esc(pre)}" style="width:110px;letter-spacing:.3em;text-align:center;font-weight:700" /><button class="btn primary">Join</button></form>`;
+      }
       case 'private': return `<div class="notice">Invite only.</div>`;
       default: return `<button class="btn primary lg" id="join" style="width:100%">Join lobby</button>`;
     }

@@ -166,6 +166,11 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 .tabs a { text-decoration: none; padding: 6px 14px; border-radius: 999px; color: var(--muted); border: 1px solid transparent; }
 .tabs a.active { color: var(--text); border-color: var(--line); background: var(--card); }
 
+.code-find { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 14px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+.code-find label { margin: 0; font-weight: 600; font-size: .9rem; color: var(--muted); white-space: nowrap; }
+.code-find input { width: 78px; padding: 6px 8px; text-align: center; letter-spacing: .3em; font-weight: 700; border-radius: 8px; }
+.vis-filter { gap: 10px; }
+
 /* lobby card */
 .lobby-card { display: flex; flex-direction: column; gap: 10px; text-decoration: none; transition: border-color .15s, transform .15s; }
 .lobby-card:hover { border-color: var(--accent); transform: translateY(-2px); }

@@ -428,8 +428,52 @@ async function listLobbies(ctx, url) {
   if (q) lobbies = lobbies.filter((l) => [l.title, l.game, l.description].join(' ').toLowerCase().includes(q));
   if (cat) lobbies = lobbies.filter((l) => l.categories.includes(cat));
   if (plat) lobbies = lobbies.filter((l) => l.platforms.includes(plat));
+  // ?visibility=public,code -> any of those types (empty = all)
+  const vis = (url.searchParams.get('visibility') || '').split(',').filter((v) => VISIBILITIES.includes(v));
+  if (vis.length) lobbies = lobbies.filter((l) => vis.includes(l.visibility));
   lobbies.sort((a, b) => (a.scheduledAt || a.createdAt).localeCompare(b.scheduledAt || b.createdAt));
   return json({ lobbies: lobbies.slice(0, 200).map((l) => lobbySummary(l, hosts)) });
+}
+
+/** A 4-digit code no other open Code lobby is using, so a code always points to one lobby. */
+async function uniqueCode(exceptId) {
+  const taken = new Set((await db.lobbies.all())
+    .filter((l) => l.id !== exceptId && l.status === 'open' && l.visibility === 'code').map((l) => l.code));
+  for (let i = 0; i < 200; i++) {
+    const c = newCode();
+    if (!taken.has(c)) return c;
+  }
+  return newCode();
+}
+
+// Codes are only 4 digits, so cap wrong guesses: 10 per 15 minutes per account.
+const CODE_TRIES = 10;
+const CODE_WINDOW_MS = 15 * 60 * 1000;
+function checkCodeLimit(user) {
+  const a = user.codeAttempts;
+  if (a && Date.now() - a.start < CODE_WINDOW_MS && a.count >= CODE_TRIES) {
+    const mins = Math.ceil((a.start + CODE_WINDOW_MS - Date.now()) / 60000);
+    fail(429, `Too many wrong codes. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
+  }
+}
+async function recordWrongCode(user) {
+  const a = user.codeAttempts;
+  user.codeAttempts = a && Date.now() - a.start < CODE_WINDOW_MS ? { ...a, count: a.count + 1 } : { start: Date.now(), count: 1 };
+  await db.users.put(user);
+}
+
+/** "Have a code?" — find the open Code lobby that uses this code. */
+async function findLobbyByCode(ctx, b) {
+  const me = await requireUser(ctx);
+  checkCodeLimit(me);
+  const code = String(b.code || '').trim();
+  if (!/^\d{4}$/.test(code)) fail(400, 'Codes are 4 digits');
+  const match = (await db.lobbies.all()).find((l) => l.status === 'open' && l.visibility === 'code' && l.code === code);
+  if (!match) {
+    await recordWrongCode(me);
+    fail(404, 'No open lobby uses that code. Double-check it with the host.');
+  }
+  return json({ id: match.id });
 }
 
 async function createLobby(ctx, req, b) {
@@ -439,8 +483,9 @@ async function createLobby(ctx, req, b) {
   const fields = readLobbyFields(b);
   const l = {
     id: newId(), ...fields, hostId: me.id, coHostIds: [], memberIds: [me.id], requestIds: [],
-    invitedIds: [], code: newCode(), status: 'open', createdAt: now(), updatedAt: now(), discord: {},
+    invitedIds: [], code: '', status: 'open', createdAt: now(), updatedAt: now(), discord: {},
   };
+  l.code = await uniqueCode(l.id);
   l.coHostIds = idList(b.coHostIds, 5).filter((id) => id !== me.id);
   if (l.visibility === 'private') l.invitedIds = idList(b.invitedIds, 100).filter((id) => id !== me.id);
   return saveAndRespond(ctx, req, l);
@@ -463,7 +508,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       needManager();
       const fields = readLobbyFields(b, l);
       if (fields.maxSlots < l.memberIds.length) fail(400, `There are already ${l.memberIds.length} people in this lobby`);
-      if (fields.visibility === 'code' && l.visibility !== 'code') l.code = newCode();
+      if (fields.visibility === 'code' && l.visibility !== 'code') l.code = await uniqueCode(l.id);
       Object.assign(l, fields);
       if (isHost && Array.isArray(b.coHostIds)) l.coHostIds = idList(b.coHostIds, 5).filter((x) => x !== l.hostId);
       break;
@@ -478,7 +523,8 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       else if (l.visibility === 'public') direct();
       else if (l.visibility === 'friends') direct(); // canView already checked friendship
       else if (l.visibility === 'code') {
-        if (String(b.code || '').trim() !== l.code) fail(403, 'Wrong code');
+        checkCodeLimit(me);
+        if (String(b.code || '').trim() !== l.code) { await recordWrongCode(me); fail(403, 'Wrong code'); }
         direct();
       } else if (l.visibility === 'approval') {
         if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id);
@@ -536,7 +582,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     }
     case 'POST regenerate-code': {
       needManager();
-      l.code = newCode();
+      l.code = await uniqueCode(l.id);
       return saveAndRespond(ctx, req, l, { sync: false });
     }
     case 'POST complete': {
@@ -626,6 +672,7 @@ export default async (req) => {
 
     if (path === '/lobbies' && m === 'GET') return await listLobbies(ctx, url);
     if (path === '/lobbies' && m === 'POST') return await createLobby(ctx, req, b);
+    if (path === '/lobby-code' && m === 'POST') return await findLobbyByCode(ctx, b);
     if (seg[0] === 'lobbies' && seg[1]) return await lobbyAction(ctx, req, seg[1], seg[2] || '', seg[3], b);
 
     fail(404, 'Not found');

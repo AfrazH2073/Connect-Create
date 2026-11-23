@@ -228,6 +228,30 @@ await test('must be in the Discord server to join or host', async () => {
   assert.equal(ok.lobby.me.isMember, true, 'joins once they are in the server');
 });
 
+await test('filter lobbies by any combination of types', async () => {
+  const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
+  assert.deepEqual([...await types('code')], ['code']);
+  assert.deepEqual([...await types('public,approval')].sort(), ['approval', 'public']);
+  assert.ok((await types('')).size >= 3, 'no filter = every type');
+  assert.ok(!(await bob.call('GET', '/lobbies?visibility=private')).lobbies.some((l) => l.title === 'Secret'), 'filter never reveals hidden private lobbies');
+});
+
+await test('enter a code to find its lobby; codes are unique; wrong guesses are limited', async () => {
+  const a = (await host.call('POST', '/lobbies', { title: 'Code A', visibility: 'code' })).lobby;
+  const b = (await host.call('POST', '/lobbies', { title: 'Code B', visibility: 'code' })).lobby;
+  assert.notEqual(a.code, b.code, 'open Code lobbies never share a code');
+  const found = await carol.call('POST', '/lobby-code', { code: b.code });
+  assert.equal(found.id, b.id);
+  assert.equal((await anon('/lobby-code')).status, 404, 'GET is not a route');
+  const erin = await makeUser('erin');
+  const openCodes = new Set((await db.lobbies.all()).filter((l) => l.status === 'open' && l.visibility === 'code').map((l) => l.code));
+  const wrong = [...Array(10000).keys()].map((n) => String(n).padStart(4, '0')).filter((c) => !openCodes.has(c));
+  for (let i = 0; i < 10; i++) assert.equal((await erin.call('POST', '/lobby-code', { code: wrong[i] })).status, 404);
+  const locked = await erin.call('POST', '/lobby-code', { code: b.code });
+  assert.equal(locked.status, 429, 'locked out after 10 wrong codes, even with the right one');
+  assert.equal((await erin.call('POST', `/lobbies/${b.id}/join`, { code: b.code })).status, 429, 'joining is locked too');
+});
+
 async function oauthLogin(query) {
   const login = await api(new Request(`https://site.test/api/auth/login${query}`));
   const cookies = login.headers.getSetCookie().map((c) => c.split(';')[0]).filter((c) => !c.endsWith('='));
