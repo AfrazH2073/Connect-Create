@@ -14,9 +14,9 @@ export const newCode = () => String(crypto.randomInt(0, 10000)).padStart(4, '0')
 export const now = () => new Date().toISOString();
 
 export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code, extra) { super(message); this.status = status; this.code = code; this.extra = extra; }
 }
-export const fail = (status, message) => { throw new HttpError(status, message); };
+export const fail = (status, message, code, extra) => { throw new HttpError(status, message, code, extra); };
 
 export function str(v, max, { required = false, name = 'field' } = {}) {
   const s = typeof v === 'string' ? v.trim().slice(0, max) : '';

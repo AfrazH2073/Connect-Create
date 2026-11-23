@@ -11,14 +11,22 @@ process.env.DISCORD_CLIENT_ID = '900000000000000002';
 // ---- fake Discord REST ----
 const calls = [];
 const channels = new Map();
+const notInServer = new Set();
 let chanSeq = 1;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
   const method = opts.method || 'GET';
-  const body = opts.body ? JSON.parse(opts.body) : null;
+  let body = null;
+  try { body = typeof opts.body === 'string' ? JSON.parse(opts.body) : null; } catch { /* form-encoded (OAuth) */ }
   calls.push(`${method} ${u.pathname}`);
   const reply = (status, data) => new Response(data ? JSON.stringify(data) : null, { status });
   let m;
+  if (u.pathname.endsWith('/oauth2/token')) return reply(200, { access_token: 'tok' });
+  if (u.pathname.endsWith('/users/@me')) return reply(200, { id: alice.id, username: 'alice', global_name: 'Alice', avatar: null });
+  if ((m = u.pathname.match(/\/guilds\/\d+\/members\/(\d+)$/)) && method === 'PUT') { notInServer.delete(m[1]); return reply(201, {}); }
+  if ((m = u.pathname.match(/\/guilds\/\d+\/members\/(\d+)$/)) && method === 'GET') {
+    return notInServer.has(m[1]) ? reply(404, { message: 'Unknown Member', code: 10007 }) : reply(200, { user: { id: m[1] } });
+  }
   if (globalThis.failVoice && method === 'POST' && body?.type === 2) return reply(403, { message: 'Missing Permissions', code: 50013 });
   if (method === 'POST' && /\/guilds\/\d+\/channels$/.test(u.pathname)) {
     const id = String(800000000000000000n + BigInt(chanSeq++));
@@ -204,6 +212,31 @@ await test('Discord failure shows host a fix, keeps half-made channel, retry fin
   const voiceId = r.lobby.discord.voiceUrl.split('/').pop();
   assert.ok(channels.get(voiceId).overwrites.has(alice.id), 'members get access to the new voice channel');
   assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/sync-discord`)).status, 403, 'only hosts can retry');
+});
+
+await test('must be in the Discord server to join or host', async () => {
+  const dave = await makeUser('dave');
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Server check', visibility: 'public' });
+  notInServer.add(dave.id);
+  const r = await dave.call('POST', `/lobbies/${lobby.id}/join`);
+  assert.equal(r.status, 409);
+  assert.equal(r.code, 'NOT_IN_SERVER');
+  assert.equal((await dave.call('GET', `/lobbies/${lobby.id}`)).lobby.memberCount, 1, 'not added to the lobby');
+  assert.equal((await dave.call('POST', '/lobbies', { title: 'Mine' })).code, 'NOT_IN_SERVER', 'also blocks hosting');
+  notInServer.delete(dave.id);
+  const ok = await dave.call('POST', `/lobbies/${lobby.id}/join`);
+  assert.equal(ok.lobby.me.isMember, true, 'joins once they are in the server');
+});
+
+await test('"Add me to the server" login returns you to the lobby', async () => {
+  const login = await api(new Request('https://site.test/api/auth/login?return=%23%2Flobbies%2Fabc123'));
+  const cookies = login.headers.getSetCookie().map((c) => c.split(';')[0]);
+  assert.ok(cookies.some((c) => c.startsWith('cc_return=')));
+  const state = cookies.find((c) => c.startsWith('cc_oauth_state=')).split('=')[1];
+  const cb = await api(new Request(`https://site.test/api/auth/callback?code=x&state=${state}`, { headers: { cookie: cookies.join('; ') } }));
+  assert.equal(cb.headers.get('location'), '/#/lobbies/abc123?joined_server=1');
+  const evil = await api(new Request('https://site.test/api/auth/login?return=https%3A%2F%2Fevil.example'));
+  assert.ok(!evil.headers.getSetCookie().some((c) => c.startsWith('cc_return=')), 'ignores off-site return targets');
 });
 
 await test('switch accounts: only accounts signed in on this browser', async () => {

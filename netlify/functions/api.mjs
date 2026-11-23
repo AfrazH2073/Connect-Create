@@ -44,9 +44,15 @@ async function usersById(ids) {
 async function login(req) {
   if (!process.env.DISCORD_CLIENT_ID) fail(500, 'DISCORD_CLIENT_ID is not configured');
   const state = newId();
-  const addAccount = new URL(req.url).searchParams.get('add') === '1';
+  const params = new URL(req.url).searchParams;
+  const addAccount = params.get('add') === '1';
   const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state, addAccount ? 'consent' : 'none');
-  return redirect(url, [`cc_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure(req) ? '; Secure' : ''}`]);
+  const sec = isSecure(req) ? '; Secure' : '';
+  const cookies = [`cc_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${sec}`];
+  // Optional page to land on afterwards, e.g. the lobby you were joining. Only in-site hash routes.
+  const back = params.get('return') || '';
+  if (/^#\/[\w\-/?=&.%]{0,200}$/.test(back)) cookies.push(`cc_return=${encodeURIComponent(back)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${sec}`);
+  return redirect(url, cookies);
 }
 
 async function callback(req) {
@@ -83,10 +89,15 @@ async function callback(req) {
   user.lastLoginAt = now();
   await db.users.put(user);
 
-  return redirect(isNew || !user.onboarded ? '/#/me/edit?welcome=1' : '/#/', [
+  const back = parseCookies(req).cc_return;
+  const target = isNew || !user.onboarded ? '/#/me/edit?welcome=1'
+    : back && /^#\/[\w\-/?=&.%]{0,200}$/.test(back) ? `/${back}${back.includes('?') ? '&' : '?'}joined_server=${inServer ? 1 : 0}`
+    : '/#/';
+  return redirect(target, [
     createSessionCookie(user.id, isSecure(req)),
     accountsCookie([user.id, ...readAccounts(req)], isSecure(req)),
     'cc_oauth_state=; Path=/; Max-Age=0',
+    'cc_return=; Path=/; Max-Age=0',
   ]);
 }
 
@@ -364,6 +375,18 @@ function readLobbyFields(b, existing) {
   };
 }
 
+/** Lobby chats live in the Discord server, so you must be in it to take part. */
+async function requireInServer(user) {
+  const member = await discord.isGuildMember(user.id);
+  if (member === null) return; // can't check right now — don't block
+  if (member !== user.inServer) { user.inServer = member; await db.users.put(user); }
+  if (!member) {
+    fail(409, 'Join the Create and Connect Discord server first — lobby chats and voice happen there.', 'NOT_IN_SERVER', {
+      inviteUrl: process.env.DISCORD_INVITE_URL || null,
+    });
+  }
+}
+
 async function loadLobby(ctx, id) {
   const l = await db.lobbies.get(id);
   if (!l) fail(404, 'Lobby not found');
@@ -405,6 +428,7 @@ async function listLobbies(ctx, url) {
 async function createLobby(ctx, req, b) {
   const me = await requireUser(ctx);
   if (!me.onboarded) fail(400, 'Finish your profile before creating a lobby');
+  await requireInServer(me);
   const fields = readLobbyFields(b);
   const l = {
     id: newId(), ...fields, hostId: me.id, coHostIds: [], memberIds: [me.id], requestIds: [],
@@ -441,6 +465,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       needOpen();
       if (isMember(l, me.id)) fail(400, "You're already in this lobby");
       if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
+      await requireInServer(me);
       const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
       if (manager || l.invitedIds.includes(me.id)) direct();
       else if (l.visibility === 'public') direct();
@@ -598,7 +623,7 @@ export default async (req) => {
 
     fail(404, 'Not found');
   } catch (e) {
-    if (e instanceof HttpError) return json({ error: e.message }, e.status);
+    if (e instanceof HttpError) return json({ error: e.message, code: e.code, ...e.extra }, e.status);
     console.error(e);
     return json({ error: 'Something went wrong on our side' }, 500);
   }

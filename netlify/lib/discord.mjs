@@ -66,8 +66,8 @@ export function explainDiscordError(e) {
   const raw = JSON.stringify(e.data || {});
   if (e.status === 401) return 'Discord rejected the bot token. Copy a fresh token (Developer Portal → Bot → Reset Token), update DISCORD_BOT_TOKEN in Netlify, and redeploy.';
   if (e.code === 10004 || (e.status === 404 && /guild/i.test(raw))) return 'Discord says that server doesn\'t exist for this bot. Check DISCORD_GUILD_ID in Netlify and that the bot was added to the Create and Connect server.';
-  if (e.code === 50001) return 'The bot is missing access. Make sure it is in the Create and Connect server (and can see the lobby category, if DISCORD_CATEGORY_ID is set).';
-  if (e.code === 50013) return 'The bot is missing permissions. In Discord: Server Settings → Roles → the bot\'s role → turn on Administrator.';
+  if (e.code === 50001) return 'The bot is missing access. Make sure it is in the Create and Connect server (invite it via Developer Portal → OAuth2 → URL Generator → "bot" + Administrator), and that it can see the lobby category if DISCORD_CATEGORY_ID is set.';
+  if (e.code === 50013) return 'The bot is missing permissions. First check the bot is actually in the Create and Connect server (invite it via Developer Portal → OAuth2 → URL Generator → "bot" + Administrator). If it is, go to Server Settings → Roles → the bot\'s role → turn on Administrator.';
   if (e.status === 400 && /parent_id/.test(raw)) return 'DISCORD_CATEGORY_ID is not a category in this server. Fix it in Netlify (or delete it) and redeploy.';
   if (e.status === 403 && !e.code) return 'Discord blocked the request (HTTP 403). This is usually temporary — try again in a minute.';
   return `Discord error ${e.status || ''}${e.code ? ` (code ${e.code})` : ''}: ${e.data?.message || e.message}`.trim();
@@ -112,6 +112,23 @@ export async function fetchDiscordUser(accessToken) {
   return res.json();
 }
 
+/**
+ * Is this Discord user in the Create and Connect server?
+ * Returns true/false, or null if we can't tell (bot not set up, Discord down) — callers
+ * should not block anyone on null.
+ */
+export async function isGuildMember(userId) {
+  if (!discordConfigured()) return null;
+  try {
+    await bot('GET', `/guilds/${process.env.DISCORD_GUILD_ID}/members/${userId}`);
+    return true;
+  } catch (e) {
+    if (e.code === 10007 || e.code === 10013) return false; // Unknown Member / Unknown User
+    console.error('isGuildMember check failed', e.message);
+    return null;
+  }
+}
+
 /** Adds the user to the Create and Connect server (no-op if already a member). */
 export async function addToGuild(userId, accessToken) {
   if (!discordConfigured()) return false;
@@ -150,9 +167,18 @@ async function removeMember(channelId, userId) {
 export async function syncLobbyChannels(lobby, siteUrl) {
   lobby.discord ||= {};
   const d = lobby.discord;
-  if (!discordConfigured() || d.deletedAt || lobby.status === 'cancelled') return d;
+  if (d.deletedAt || lobby.status === 'cancelled') return d;
+  const missing = ['DISCORD_BOT_TOKEN', 'DISCORD_GUILD_ID', 'DISCORD_CLIENT_ID'].filter((k) => !process.env[k]);
+  if (missing.length) {
+    d.error = `The site can't see ${missing.join(' and ')} in Netlify. Add it under Site configuration → Environment variables (scope must include Functions), then redeploy.`;
+    console.error('syncLobbyChannels skipped:', d.error);
+    return d;
+  }
   const memberIds = lobby.memberIds;
-  if (!d.textId && memberIds.length < 2) return d;
+  if (!d.textId && memberIds.length < 2) {
+    d.error = null; // nothing to do yet; channels open once a 2nd person joins
+    return d;
+  }
 
   const guild = process.env.DISCORD_GUILD_ID;
   try {

@@ -19,6 +19,8 @@ async function api(method, path, body) {
   if (!res.ok) {
     const err = new Error(data.error || `Request failed (${res.status})`);
     err.status = res.status;
+    err.code = data.code;
+    err.data = data;
     throw err;
   }
   return data;
@@ -117,6 +119,35 @@ function embedUrl(c) {
 }
 function playClip(c) {
   openModal(`<iframe class="embed" src="${esc(embedUrl(c))}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen title="${esc(c.title)}"></iframe>`, { wide: true });
+}
+
+// ---------- "join the Discord server first" prompt ----------
+
+/** Runs fn; if the server says you're not in the Discord server yet, shows the join prompt instead. */
+async function withServerCheck(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err.code !== 'NOT_IN_SERVER') throw err;
+    showJoinServerPrompt(err.data?.inviteUrl, fn);
+    return null;
+  }
+}
+
+function showJoinServerPrompt(inviteUrl, retry) {
+  const back = encodeURIComponent(location.hash || '#/');
+  const { el, close } = openModal(`
+    <div class="modal-head"><h2 class="row" style="gap:10px">${ICON.discord} Join our Discord first</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+    <p class="muted" style="margin-top:0">Every lobby gets a private text and voice channel in the <strong>Create and Connect</strong> Discord server, so you need to be in the server before you can join or host a lobby.</p>
+    <a class="btn discord lg" style="width:100%" href="${loginUrl}?return=${back}">${ICON.discord} Add me to the server</a>
+    <p class="hint" style="margin:8px 0 0;text-align:center">You'll approve it on Discord, then come straight back here.</p>
+    ${inviteUrl ? `<p class="hint" style="text-align:center;margin:14px 0 0">Or use the <a href="${esc(inviteUrl)}" target="_blank" rel="noopener">server invite link</a>.</p>` : ''}
+    <div class="menu-sep" style="margin:18px 0"></div>
+    <div class="row" style="justify-content:space-between"><span class="hint">Already joined?</span><button class="btn sm" id="retry-join">I've joined — try again</button></div>`);
+  el.querySelector('#retry-join').addEventListener('click', act(async () => {
+    close();
+    await withServerCheck(retry);
+  }));
 }
 
 // ---------- user picker (search creators by name) ----------
@@ -530,9 +561,14 @@ async function viewLobbyForm(id) {
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
     try {
-      const { lobby } = l ? await api('PUT', `/lobbies/${l.id}`, payload) : await api('POST', '/lobbies', payload);
-      toast(l ? 'Lobby updated' : 'Lobby created!');
-      location.hash = `#/lobbies/${lobby.id}`;
+      const save = async () => {
+        const { lobby } = l ? await api('PUT', `/lobbies/${l.id}`, payload) : await api('POST', '/lobbies', payload);
+        toast(l ? 'Lobby updated' : 'Lobby created!');
+        location.hash = `#/lobbies/${lobby.id}`;
+        return lobby;
+      };
+      await withServerCheck(save);
+      btn.disabled = false;
     } catch (err) { toast(err.message, true); btn.disabled = false; }
   });
 }
@@ -635,7 +671,13 @@ async function viewLobby(id) {
 
     const base = `/lobbies/${l.id}`;
     const on = (sel, fn) => { const el = document.querySelector(sel); if (el) el.addEventListener('click', run(fn)); };
-    on('#join', async () => { const r = await api('POST', `${base}/join`); toast(r.lobby.me.isMember ? 'Joined!' : 'Request sent'); refreshInboxCount().then(() => renderNav(currentRoute)); return r; });
+    on('#join', () => withServerCheck(async () => {
+      const r = await api('POST', `${base}/join`);
+      l = r.lobby; render();
+      toast(r.lobby.me.isMember ? 'Joined!' : 'Request sent');
+      refreshInboxCount().then(() => renderNav(currentRoute));
+      return r;
+    }));
     on('#leave', () => api('POST', `${base}/leave`));
     on('#decline', async () => { await api('POST', `${base}/decline-invite`); location.hash = '#/inbox'; });
     on('#sync-discord', async () => {
@@ -657,7 +699,10 @@ async function viewLobby(id) {
     const codef = document.getElementById('codef');
     codef?.addEventListener('submit', async (e) => {
       e.preventDefault();
-      try { const r = await api('POST', `${base}/join`, { code: new FormData(codef).get('code') }); l = r.lobby; toast('Joined!'); render(); } catch (err) { toast(err.message, true); }
+      const code = new FormData(codef).get('code');
+      try {
+        await withServerCheck(async () => { const r = await api('POST', `${base}/join`, { code }); l = r.lobby; toast('Joined!'); render(); return r; });
+      } catch (err) { toast(err.message, true); }
     });
     const inv = document.getElementById('inv');
     if (inv) {
@@ -719,6 +764,13 @@ async function route() {
   if (state.me && !state.me.onboarded && !(seg[0] === 'me' && seg[1] === 'edit')) {
     location.hash = '#/me/edit?welcome=1';
     return;
+  }
+
+  const joined = params.get('joined_server');
+  if (joined) {
+    toast(joined === '1' ? "You're in the Create and Connect server — now hit Join!" : "We couldn't add you to the Discord server automatically. Try again or ask the host for an invite.", joined !== '1');
+    params.delete('joined_server');
+    history.replaceState(null, '', `#${path}${params.size ? `?${params}` : ''}`);
   }
 
   $app.innerHTML = '<div class="loading">Loading…</div>';
