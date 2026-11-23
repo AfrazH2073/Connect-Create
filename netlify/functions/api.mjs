@@ -2,7 +2,7 @@
 // netlify.toml rewrites /api/* -> this function.
 
 import { db } from '../lib/db.mjs';
-import { createSessionCookie, clearSessionCookie, readSession, parseCookies } from '../lib/session.mjs';
+import { createSessionCookie, clearSessionCookie, readSession, parseCookies, readAccounts, accountsCookie } from '../lib/session.mjs';
 import * as discord from '../lib/discord.mjs';
 import {
   PLATFORMS, CATEGORIES, VISIBILITIES, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
@@ -44,7 +44,8 @@ async function usersById(ids) {
 async function login(req) {
   if (!process.env.DISCORD_CLIENT_ID) fail(500, 'DISCORD_CLIENT_ID is not configured');
   const state = newId();
-  const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state);
+  const addAccount = new URL(req.url).searchParams.get('add') === '1';
+  const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state, addAccount ? 'consent' : 'none');
   return redirect(url, [`cc_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure(req) ? '; Secure' : ''}`]);
 }
 
@@ -84,8 +85,49 @@ async function callback(req) {
 
   return redirect(isNew || !user.onboarded ? '/#/me/edit?welcome=1' : '/#/', [
     createSessionCookie(user.id, isSecure(req)),
+    accountsCookie([user.id, ...readAccounts(req)], isSecure(req)),
     'cc_oauth_state=; Path=/; Max-Age=0',
   ]);
+}
+
+// ---------- multiple accounts on one browser ----------
+
+function withCookies(data, cookies) {
+  const h = new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  for (const c of cookies) h.append('Set-Cookie', c);
+  return new Response(JSON.stringify(data), { status: 200, headers: h });
+}
+
+// Includes the current session even if it was created before accounts were remembered.
+const knownAccounts = (req, ctx) => [...new Set([ctx.uid, ...readAccounts(req)].filter(Boolean))];
+
+async function listAccounts(req, ctx) {
+  const ids = knownAccounts(req, ctx);
+  const users = await usersById(ids);
+  return json({
+    currentId: ctx.uid,
+    accounts: ids.map((id) => miniUser(users[id])).filter(Boolean),
+  });
+}
+
+async function switchAccount(req, ctx, b) {
+  const ids = knownAccounts(req, ctx);
+  if (!ids.includes(b.id)) fail(403, 'That account is not signed in on this browser — use "Add another account"');
+  if (!(await db.users.get(b.id))) fail(404, 'Account not found');
+  return withCookies({ ok: true }, [
+    createSessionCookie(b.id, isSecure(req)),
+    accountsCookie([b.id, ...ids], isSecure(req)),
+  ]);
+}
+
+/** Logs out the current account. Switches to another remembered account if there is one, unless `all` is set. */
+function logout(req, ctx, b) {
+  const secure = isSecure(req);
+  const rest = b.all ? [] : readAccounts(req).filter((id) => id !== ctx.uid);
+  if (rest.length) {
+    return withCookies({ ok: true, switchedTo: rest[0] }, [createSessionCookie(rest[0], secure), accountsCookie(rest, secure)]);
+  }
+  return withCookies({ ok: true, switchedTo: null }, [clearSessionCookie(), accountsCookie([], secure)]);
 }
 
 // ---------- me / users ----------
@@ -368,7 +410,7 @@ async function createLobby(ctx, req, b) {
     invitedIds: [], code: newCode(), status: 'open', createdAt: now(), updatedAt: now(), discord: {},
   };
   l.coHostIds = idList(b.coHostIds, 5).filter((id) => id !== me.id);
-  l.invitedIds = idList(b.invitedIds, 100).filter((id) => id !== me.id);
+  if (l.visibility === 'private') l.invitedIds = idList(b.invitedIds, 100).filter((id) => id !== me.id);
   return saveAndRespond(ctx, req, l);
 }
 
@@ -526,7 +568,9 @@ export default async (req) => {
 
     if (path === '/auth/login' && m === 'GET') return await login(req);
     if (path === '/auth/callback' && m === 'GET') return await callback(req);
-    if (path === '/auth/logout' && m === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': clearSessionCookie() });
+    if (path === '/auth/logout' && m === 'POST') return logout(req, ctx, b);
+    if (path === '/accounts' && m === 'GET') return await listAccounts(req, ctx);
+    if (path === '/accounts/switch' && m === 'POST') return await switchAccount(req, ctx, b);
 
     if (path === '/me' && m === 'GET') return await getMe(ctx);
     if (path === '/me' && m === 'PUT') return await updateMe(ctx, b);

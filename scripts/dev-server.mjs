@@ -13,7 +13,7 @@ process.env.SESSION_SECRET ||= 'local-dev-secret-local-dev-secret';
 
 const { default: api } = await import('../netlify/functions/api.mjs');
 const { db } = await import('../netlify/lib/db.mjs');
-const { createSessionCookie } = await import('../netlify/lib/session.mjs');
+const { createSessionCookie, accountsCookie, readAccounts } = await import('../netlify/lib/session.mjs');
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PORT = Number(process.env.PORT) || 8888;
@@ -39,11 +39,16 @@ http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/dev/login') {
       const u = await devLogin((url.searchParams.get('name') || 'tester').toLowerCase().replace(/[^a-z0-9_.]/g, ''));
-      res.writeHead(302, { Location: u.onboarded ? '/#/' : '/#/me/edit?welcome=1', 'Set-Cookie': createSessionCookie(u.id, false) });
+      const prev = readAccounts(new Request(url, { headers: { cookie: req.headers.cookie || '' } }));
+      res.writeHead(302, {
+        Location: u.onboarded ? '/#/' : '/#/me/edit?welcome=1',
+        'Set-Cookie': [createSessionCookie(u.id, false), accountsCookie([u.id, ...prev], false)],
+      });
       return res.end();
     }
     if (url.pathname === '/api/auth/login') {
-      res.writeHead(302, { Location: '/dev/login?name=tester' });
+      const name = url.searchParams.get('add') === '1' ? `creator${Math.floor(Math.random() * 1000)}` : 'tester';
+      res.writeHead(302, { Location: `/dev/login?name=${name}` });
       return res.end();
     }
     if (url.pathname.startsWith('/api/')) {

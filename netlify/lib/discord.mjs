@@ -60,7 +60,9 @@ async function bot(method, path, body) {
 
 // ---------- OAuth (login + verification) ----------
 
-export function authorizeUrl(redirectUri, state) {
+// prompt 'consent' always shows Discord's approval screen, which has a
+// "Not you?" link for signing in with a different Discord account.
+export function authorizeUrl(redirectUri, state, prompt = 'none') {
   const p = new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID,
     response_type: 'code',
@@ -68,7 +70,7 @@ export function authorizeUrl(redirectUri, state) {
     // identify = read your verified username/ID; guilds.join = auto-add you to the Create and Connect server
     scope: 'identify guilds.join',
     state,
-    prompt: 'none',
+    prompt,
   });
   return `https://discord.com/oauth2/authorize?${p}`;
 }

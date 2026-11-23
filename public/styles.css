@@ -64,6 +64,30 @@ main.container { flex: 1; padding-top: 28px; padding-bottom: 48px; }
 .me-chip:hover { border-color: var(--accent); }
 .me-chip span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 
+.me-chip { cursor: pointer; }
+.me-chip .caret { color: var(--muted); font-size: .75rem; margin-left: -2px; }
+.menu-wrap { position: relative; }
+/* invisible bridge so the menu stays open while the mouse moves down to it */
+.menu-wrap::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 10px; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 8px); width: 270px; z-index: 30;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  padding: 6px; display: none;
+}
+.menu-wrap.open .menu, .menu-wrap:focus-within .menu { display: block; }
+@media (hover: hover) { .menu-wrap:hover .menu { display: block; } }
+.menu a, .menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 8px;
+  background: none; border: none; text-align: left; text-decoration: none; cursor: pointer; font-size: .95rem;
+}
+.menu a:hover, .menu button:hover, .menu a:focus-visible, .menu button:focus-visible { background: rgba(139, 92, 246, .16); outline: none; }
+.menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; }
+.menu-head .dim { font-size: .85rem; }
+.menu-sep { height: 1px; background: var(--line); margin: 6px 4px; }
+.menu-label { padding: 4px 10px; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+.menu .danger-item { color: var(--bad); }
+
 /* ---------- buttons & inputs ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -253,7 +277,8 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
   .topbar-inner { gap: 10px; flex-wrap: wrap; }
   .brand span { display: none; }
   .nav a { padding: 6px 10px; }
-  .me-chip span { display: none; }
+  .me-chip > span { display: none; }
+  .menu { position: fixed; left: 16px; right: 16px; top: 60px; width: auto; }
   .me-chip { padding: 3px; }
   .page-head h1 { font-size: 1.6rem; }
   .profile-head .actions { margin-left: 0; }

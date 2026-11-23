@@ -2,7 +2,7 @@
 // Routes use the URL hash: #/lobbies, #/lobbies/<id>, #/u/<id>, ...
 
 const $app = document.getElementById('app');
-const state = { me: null, config: { categories: [], platforms: [], visibilities: [] }, inboxCount: 0 };
+const state = { me: null, accounts: [], config: { categories: [], platforms: [], visibilities: [] }, inboxCount: 0 };
 
 // ---------- utilities ----------
 
@@ -153,11 +153,55 @@ function renderNav(route) {
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', route.startsWith(a.dataset.nav)));
   const right = document.getElementById('nav-right');
   if (!state.me) { right.innerHTML = loginBtn('Log in', 'sm'); return; }
+  const others = state.accounts.filter((a) => a.id !== state.me.id);
   right.innerHTML = `
     <a class="btn primary sm" href="#/lobbies/new">+ Lobby</a>
     <a class="icon-btn" href="#/inbox" aria-label="Inbox">${ICON.bell}${state.inboxCount ? `<span class="badge-dot">${state.inboxCount}</span>` : ''}</a>
-    <a class="me-chip" href="#/u/${esc(state.me.id)}">${avatar(state.me, 30)}<span>${esc(state.me.displayName)}</span></a>`;
+    <div class="menu-wrap" id="me-menu">
+      <button class="me-chip" type="button" aria-haspopup="true" aria-expanded="false">${avatar(state.me, 30)}<span>${esc(state.me.displayName)}</span><span class="caret" aria-hidden="true">▾</span></button>
+      <div class="menu" role="menu">
+        <div class="menu-head">${avatar(state.me, 36)}<div><strong>${esc(state.me.displayName)}</strong><div class="dim">@${esc(state.me.discordUsername)}</div></div></div>
+        <a role="menuitem" href="#/u/${esc(state.me.id)}">View profile</a>
+        <a role="menuitem" href="#/me/edit">Edit profile</a>
+        <a role="menuitem" href="#/friends">Friends</a>
+        <a role="menuitem" href="#/lobbies?mine=1">My lobbies</a>
+        <div class="menu-sep"></div>
+        <div class="menu-label">Switch account</div>
+        ${others.map((a) => `<button role="menuitem" type="button" data-switch="${esc(a.id)}">${avatar(a, 24)}<span><strong>${esc(a.displayName)}</strong> <span class="dim">@${esc(a.discordUsername)}</span></span></button>`).join('')}
+        <a role="menuitem" href="${loginUrl}?add=1">＋ Add another account</a>
+        <div class="menu-sep"></div>
+        <button role="menuitem" type="button" class="danger-item" data-logout="one">Log out${others.length ? ` of @${esc(state.me.discordUsername)}` : ''}</button>
+        ${others.length ? '<button role="menuitem" type="button" class="danger-item" data-logout="all">Log out of all accounts</button>' : ''}
+      </div>
+    </div>`;
+
+  const wrap = document.getElementById('me-menu');
+  const toggle = wrap.querySelector('.me-chip');
+  const setOpen = (open) => { wrap.classList.toggle('open', open); toggle.setAttribute('aria-expanded', open); };
+  // Hover opens it on desktop (CSS); click/tap toggles it for touch screens and keyboards.
+  toggle.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!wrap.classList.contains('open')); });
+  wrap.querySelectorAll('a[role=menuitem]').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setOpen(false); toggle.focus(); } });
+  wrap.querySelectorAll('[data-switch]').forEach((b) => b.addEventListener('click', act(async () => {
+    await api('POST', '/accounts/switch', { id: b.dataset.switch });
+    reloadHome();
+  })));
+  wrap.querySelectorAll('[data-logout]').forEach((b) => b.addEventListener('click', act(async () => {
+    const r = await api('POST', '/auth/logout', { all: b.dataset.logout === 'all' });
+    if (r.switchedTo) sessionStorage.setItem('cc_toast', 'Logged out — switched to your other account');
+    reloadHome();
+  })));
 }
+
+function reloadHome() {
+  location.hash = '#/';
+  location.reload();
+}
+
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('me-menu');
+  if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
+});
 
 async function refreshInboxCount() {
   if (!state.me) return;
@@ -319,8 +363,7 @@ async function viewEditProfile(params) {
   });
   document.getElementById('logout')?.addEventListener('click', act(async () => {
     await api('POST', '/auth/logout');
-    state.me = null;
-    location.hash = '#/';
+    reloadHome();
   }));
 }
 
@@ -451,15 +494,17 @@ async function viewLobbyForm(id) {
           <p class="hint" id="vis-hint" style="margin-top:8px"></p>
         </div>
         ${!l || l.me.isHost ? `<div class="field"><label>Co-hosts <span class="hint">(can approve, invite, edit &amp; see the code)</span></label><div id="cohosts"></div></div>` : ''}
-        ${!l ? `<div class="field"><label>Invite creators <span class="hint">(required for Private lobbies)</span></label><div id="invites"></div></div>` : ''}
+        ${!l ? `<div class="field" id="invite-field" hidden><label>Invite creators <span class="hint">(only invited creators can see a Private lobby)</span></label><div id="invites"></div></div>` : ''}
         <div class="row" style="justify-content:flex-end"><a class="btn ghost" href="${l ? `#/lobbies/${esc(l.id)}` : '#/lobbies'}">Cancel</a><button class="btn primary" type="submit">${l ? 'Save changes' : 'Create lobby'}</button></div>
       </form>
     </div>`;
   const form = document.getElementById('lf');
   wireToggles(form);
   const hint = document.getElementById('vis-hint');
+  const inviteField = document.getElementById('invite-field');
   const updateHint = () => {
     const val = form.visibility.value;
+    if (inviteField) inviteField.hidden = val !== 'private';
     hint.textContent = val === 'code' ? 'A 4-digit code is generated after you save. Only you and co-hosts can see it, and you can regenerate it anytime.' : val === 'private' ? 'Only invited creators will see this lobby at all.' : val === 'friends' ? 'Only people on your friends list will see this lobby.' : '';
   };
   form.addEventListener('change', updateHint); updateHint();
@@ -475,7 +520,7 @@ async function viewLobbyForm(id) {
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
     };
     if (cohostPicker) payload.coHostIds = cohostPicker.get().map((u) => u.id);
-    if (invitePicker) payload.invitedIds = invitePicker.get().map((u) => u.id);
+    if (invitePicker && payload.visibility === 'private') payload.invitedIds = invitePicker.get().map((u) => u.id);
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
     try {
@@ -535,7 +580,7 @@ async function viewLobby(id) {
     return `
       ${l.visibility === 'code' ? `<div class="card"><h2>Join code</h2><div class="code-box">${esc(l.code)}</div><p class="hint">Only you and co-hosts can see this. Share it with people you want in.</p><button class="btn sm" id="regen">↻ Regenerate code</button></div>` : ''}
       ${l.requests?.length ? `<div class="card"><h2>Requests (${l.requests.length})</h2>${l.requests.map((u) => `<div class="inbox-item">${userLine(u, 30)}<div class="row"><button class="btn primary sm" data-approve="${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(u.id)}">Deny</button></div></div>`).join('')}</div>` : ''}
-      ${open ? `<div class="card"><h2>Invite creators</h2><div id="inv"></div><button class="btn sm" id="send-inv" style="margin-top:10px">Send invites</button>
+      ${open && l.visibility === 'private' ? `<div class="card"><h2>Invite creators</h2><div id="inv"></div><button class="btn sm" id="send-inv" style="margin-top:10px">Send invites</button>
         ${l.invited?.length ? `<p class="hint" style="margin:14px 0 6px">Invited, not joined yet:</p>${l.invited.map((u) => `<div class="inbox-item">${userLine(u, 26)}<button class="btn ghost sm" data-uninvite="${esc(u.id)}">Revoke</button></div>`).join('')}` : ''}</div>` : ''}
       <div class="card"><h2>Manage</h2><div class="row">
         <a class="btn sm" href="#/lobbies/${esc(l.id)}/edit">Edit</a>
@@ -689,12 +734,17 @@ async function boot() {
     const d = await api('GET', '/me');
     state.me = d.user;
     state.config = d.config;
+    if (state.me) state.accounts = (await api('GET', '/accounts')).accounts;
   } catch {
     $app.innerHTML = '<div class="empty"><h2>Can\'t reach the server</h2><p>The API isn\'t responding. If you\'re running locally, use <code>netlify dev</code> or <code>npm run dev:local</code>.</p></div>';
     return;
   }
   window.addEventListener('hashchange', route);
   route();
+  try {
+    const msg = sessionStorage.getItem('cc_toast');
+    if (msg) { sessionStorage.removeItem('cc_toast'); toast(msg); }
+  } catch { /* storage unavailable */ }
 }
 
 boot();

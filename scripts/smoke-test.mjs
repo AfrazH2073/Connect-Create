@@ -187,4 +187,22 @@ await test('cancelled lobby deletes channels immediately and disappears', async 
   assert.equal((await alice.call('GET', `/lobbies/${lobby.id}`)).status, 404);
 });
 
+await test('switch accounts: only accounts signed in on this browser', async () => {
+  const { accountsCookie } = await import('../netlify/lib/session.mjs');
+  const jar = [createSessionCookie(alice.id), accountsCookie([alice.id, bob.id])].map((c) => c.split(';')[0]).join('; ');
+  const req = (method, path, body) => api(new Request(`https://site.test/api${path}`, {
+    method, headers: { cookie: jar, 'content-type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body || {}),
+  }));
+  const list = await (await req('GET', '/accounts')).json();
+  assert.deepEqual(list.accounts.map((a) => a.id), [alice.id, bob.id]);
+  assert.equal((await req('POST', '/accounts/switch', { id: carol.id })).status, 403, 'cannot switch into an account not signed in here');
+  const sw = await req('POST', '/accounts/switch', { id: bob.id });
+  assert.equal(sw.status, 200);
+  assert.ok(sw.headers.getSetCookie().some((c) => c.startsWith('cc_session=') && !c.includes('Max-Age=0')));
+  const out = await (await req('POST', '/auth/logout', {})).json();
+  assert.equal(out.switchedTo, bob.id, 'logging out alice falls back to bob');
+  const all = await req('POST', '/auth/logout', { all: true });
+  assert.ok(all.headers.getSetCookie().every((c) => c.includes('Max-Age=0')), 'log out of all clears both cookies');
+});
+
 console.log(`\n${passed} tests passed (${calls.length} fake Discord calls)`);
