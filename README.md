@@ -8,6 +8,9 @@ Everything runs on free tiers: **Netlify** (hosting, serverless functions, sched
 
 - **Discord-verified accounts.** You sign up with "Log in with Discord". The site reads your exact Discord username from Discord itself, so nobody can claim a tag that isn't theirs. Logging in also adds you to the Create and Connect server (`guilds.join` scope).
 - **Creator profiles.** Your own display name, profile picture (upload one or keep your Discord picture), pronouns, banner colour, platforms (YouTube, Twitch, TikTok, Instagram, X / Twitter, Substack), content categories (Gaming, IRL, STEM, Beauty, …), bio, and what you're looking for. Your verified Discord username always shows too.
+- **Reviews.** On someone else's profile, click **Ask for a review**. They get it in their inbox, give 1–5 stars and write how you are to collab with. New reviews stay hidden until you choose **Show on profile**. You can hide or delete them later.
+- **Collab history.** An opt-in profile setting lists the completed lobbies you were in, and who with. A lobby only counts if it had 2+ people, the host marked it completed, and nobody flagged you in it.
+- **Flags.** When a host or co-host marks a lobby completed, they can flag anyone who caused problems, with a reason. The flagged person isn't told. Flags are posted to a Discord channel only server admins can see, and that lobby is left out of the flagged person's history.
 - **Collab showcase.** Add YouTube or Twitch videos, VODs, and clips. You have to confirm that you own the content or have the owner's explicit permission. Anyone you tag is asked to confirm, and once they do it shows on their profile too. Videos play inline.
 - **Lobbies** with five visibility modes:
   | Mode | Who can see it | How you join |
@@ -74,6 +77,8 @@ Push this repo to GitHub, then in Netlify choose **Add new site → Import from 
 | `DISCORD_BOT_TOKEN` | from step 1.3 (mark as secret) |
 | `DISCORD_GUILD_ID` | from step 1.5 |
 | `SESSION_SECRET` | any long random string. Generate one with `openssl rand -hex 32` |
+| `ADMIN_DISCORD_IDS` | *(optional)* comma-separated Discord user IDs of site admins. They can open any lobby (even private ones) and see its flags |
+| `DISCORD_ADMIN_CHANNEL_ID` | *(optional)* a channel you made for flag reports. If unset, the bot creates `#create-connect-reports`, hidden from everyone except server admins |
 | `SITE_URL` | *(optional)* e.g. `https://create-and-connect.netlify.app`. Pins the OAuth redirect to one domain |
 
 You don't need to set up a database: Netlify Blobs is enabled automatically.

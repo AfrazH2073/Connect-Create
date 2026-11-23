@@ -61,6 +61,18 @@ export const db = {
     put: (id, a) => put('avatars', id, a),
     del: (id) => del('avatars', id),
   },
+  // "How is X to collab with?" reviews. Asked for by the subject, written by the author.
+  reviews: {
+    get: (id) => get('reviews', id),
+    put: (r) => put('reviews', r.id, r),
+    del: (id) => del('reviews', id),
+    all: () => all('reviews'),
+  },
+  // Small site-wide settings, e.g. the Discord channel admin reports go to.
+  meta: {
+    get: (key) => get('meta', key),
+    put: (key, value) => put('meta', key, value),
+  },
   clips: {
     get: (id) => get('clips', id),
     put: (c) => put('clips', c.id, c),

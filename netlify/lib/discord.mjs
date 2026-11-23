@@ -346,6 +346,39 @@ export async function syncLobbyChannels(lobby, siteUrl) {
   return d;
 }
 
+// ---------- Admin reports ----------
+// Flags from hosts go to a text channel only server admins can read. Discord lets
+// anyone with the Administrator permission see every channel, so hiding it from
+// @everyone is enough. Set DISCORD_ADMIN_CHANNEL_ID to use a channel you made yourself;
+// otherwise the bot creates "create-connect-reports" once and remembers it.
+
+async function adminChannelId(meta, { fresh = false } = {}) {
+  if (process.env.DISCORD_ADMIN_CHANNEL_ID) return process.env.DISCORD_ADMIN_CHANNEL_ID;
+  const saved = await meta.get('adminChannel');
+  if (saved?.id && !fresh) return saved.id;
+  const ch = await bot('POST', `/guilds/${process.env.DISCORD_GUILD_ID}/channels`, {
+    name: 'create-connect-reports',
+    type: 0,
+    topic: 'Flags hosts raise when completing a Create & Connect lobby. Only server admins can see this channel.',
+    permission_overwrites: hidden(),
+  });
+  await meta.put('adminChannel', { id: ch.id, createdAt: new Date().toISOString() });
+  return ch.id;
+}
+
+/** Post a message to the admin reports channel. Throws if Discord isn't reachable. */
+export async function postToAdmins(meta, content) {
+  if (!discordConfigured()) throw new Error('Discord bot is not configured');
+  const send = (id) => bot('POST', `/channels/${id}/messages`, { content: content.slice(0, 2000), allowed_mentions: { parse: [] } });
+  try {
+    await send(await adminChannelId(meta));
+  } catch (e) {
+    // Someone deleted the channel: make a new one (only if we made the old one).
+    if ((e.code === 10003 || e.status === 404) && !process.env.DISCORD_ADMIN_CHANNEL_ID) await send(await adminChannelId(meta, { fresh: true }));
+    else throw e;
+  }
+}
+
 export async function postToLobby(lobby, content) {
   const d = lobby.discord;
   if (!discordConfigured() || !d || d.deletedAt) return;

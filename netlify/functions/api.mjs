@@ -4,8 +4,9 @@
 import { db } from '../lib/db.mjs';
 import { createSessionCookie, clearSessionCookie, readSession, parseCookies, readAccounts, accountsCookie } from '../lib/session.mjs';
 import * as discord from '../lib/discord.mjs';
+import { isAdmin, reportLobbyFlags } from '../lib/reports.mjs';
 import {
-  PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
+  PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
   repeatKey, validTimeZone, dateKey, syncSessionSchedule, nextSession, isPast,
 } from '../lib/model.mjs';
@@ -156,14 +157,14 @@ async function getMe(ctx) {
   const u = await db.users.get(ctx.uid);
   if (!u) return json({ user: null, config: clientConfig() });
   return json({
-    user: { ...publicUser(u), hasCustomAvatar: !!u.customAvatar, onboarded: !!u.onboarded, inServer: u.inServer, friendIds: u.friendIds, friendRequestsIn: u.friendRequestsIn, friendRequestsOut: u.friendRequestsOut },
+    user: { ...publicUser(u), hasCustomAvatar: !!u.customAvatar, showHistory: !!u.showHistory, isAdmin: isAdmin(u.id), onboarded: !!u.onboarded, inServer: u.inServer, friendIds: u.friendIds, friendRequestsIn: u.friendRequestsIn, friendRequestsOut: u.friendRequestsOut },
     config: clientConfig(),
   });
 }
 
 function clientConfig() {
   return {
-    categories: CATEGORIES, platforms: PLATFORMS, visibilities: VISIBILITIES, banners: BANNERS, repeats: Object.keys(REPEATS),
+    categories: CATEGORIES, platforms: PLATFORMS, lobbyPlatforms: LOBBY_PLATFORMS, visibilities: VISIBILITIES, banners: BANNERS, repeats: Object.keys(REPEATS),
     discordGuildId: process.env.DISCORD_GUILD_ID || null,
     discordInvite: process.env.DISCORD_INVITE_URL || null,
   };
@@ -176,6 +177,7 @@ async function updateMe(ctx, b) {
   u.lookingFor = str(b.lookingFor, 300);
   u.pronouns = str(b.pronouns, 30);
   u.banner = BANNERS.includes(b.banner) ? b.banner : u.banner || 'violet';
+  u.showHistory = b.showHistory === true;
   u.categories = pick(b.categories, CATEGORIES, 10);
   u.platforms = {};
   for (const p of PLATFORMS) {
@@ -258,16 +260,117 @@ async function getUser(ctx, id) {
   else if (ctx.uid && u.friendRequestsIn.includes(ctx.uid)) friendStatus = 'requested';
   else if (ctx.uid && u.friendRequestsOut.includes(ctx.uid)) friendStatus = 'incoming';
 
+  const self = ctx.uid === id;
+  const allLobbies = await db.lobbies.all();
   // Lobbies this creator hosts that the viewer may see
-  const lobbies = (await db.lobbies.all()).filter(
-    (l) => l.hostId === id && l.status === 'open' && canView(l, ctx.uid, u)
-  );
+  const lobbies = allLobbies.filter((l) => l.hostId === id && l.status === 'open' && canView(l, ctx.uid, u));
+
+  // Reviews: everyone sees the ones the creator chose to show; the creator sees all of theirs.
+  const allReviews = await db.reviews.all();
+  const reviews = allReviews.filter((r) => r.subjectId === id && r.status === 'written' && (self || r.shown));
+  let reviewStatus = null; // has the viewer asked this creator to review them?
+  if (ctx.uid && !self) {
+    const mine = allReviews.find((r) => r.subjectId === ctx.uid && r.authorId === id && r.status !== 'declined');
+    reviewStatus = mine ? mine.status : 'none';
+  }
+
+  // Collab history: completed lobbies they were in (2+ people) where nobody flagged them.
+  let history = null;
+  if (self || u.showHistory) {
+    const done = allLobbies.filter((l) => l.status === 'completed' && l.memberIds.includes(id) && l.memberIds.length >= 2 &&
+      !(l.flags || []).some((f) => f.userId === id));
+    const hosts = await usersById(done.map((l) => l.hostId));
+    history = done.filter((l) => canView(l, ctx.uid, hosts[l.hostId]))
+      .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
+      .slice(0, 50);
+  }
+  const extra = await usersById([...reviews.map((r) => r.authorId), ...(history || []).flatMap((l) => l.memberIds)]);
+
   return json({
     user: publicUser(u),
     friendStatus,
     clips: clips.map((c) => clipView(c, people)),
     lobbies: lobbies.map((l) => lobbySummary(l, { [u.id]: u })),
+    reviews: reviews.sort((a, b) => b.writtenAt.localeCompare(a.writtenAt)).map((r) => reviewView(r, extra, self)),
+    reviewStatus,
+    showHistory: !!u.showHistory,
+    history: history && history.map((l) => ({
+      id: l.id, title: l.title, game: l.game, completedAt: l.completedAt, recurring: !!l.recurrence,
+      host: miniUser(extra[l.hostId]),
+      with: l.memberIds.filter((m) => m !== id).map((m) => miniUser(extra[m])).filter(Boolean),
+    })),
   });
+}
+
+// ---------- reviews ----------
+// You ask someone to review how you are to collab with. When they write it, it stays
+// hidden until you choose to show it on your profile.
+
+function reviewView(r, people, forSubject) {
+  return {
+    id: r.id, rating: r.rating, text: r.text, writtenAt: r.writtenAt,
+    author: miniUser(people[r.authorId]),
+    ...(forSubject ? { shown: !!r.shown } : {}),
+  };
+}
+
+async function requestReview(ctx, targetId, b) {
+  const me = await requireUser(ctx);
+  if (!me.onboarded) fail(400, 'Finish your profile first');
+  if (targetId === me.id) fail(400, "You can't review yourself");
+  const them = await db.users.get(targetId);
+  if (!them || !them.onboarded) fail(404, 'Creator not found');
+  const all = await db.reviews.all();
+  const between = all.filter((r) => r.subjectId === me.id && r.authorId === them.id);
+  if (between.some((r) => r.status === 'requested')) fail(400, "You've already asked them. Waiting on their review.");
+  if (between.some((r) => r.status === 'written')) fail(400, 'They already reviewed you');
+  const declined = between.find((r) => r.status === 'declined');
+  if (declined && Date.now() - Date.parse(declined.declinedAt) < 30 * 864e5) fail(400, 'They passed on your last request. You can ask again 30 days after that.');
+  if (all.filter((r) => r.subjectId === me.id && r.status === 'requested').length >= 20) {
+    fail(429, 'You have 20 review requests waiting. Wait for some answers first.');
+  }
+  if (declined) await db.reviews.del(declined.id);
+  await db.reviews.put({ id: newId(), subjectId: me.id, authorId: them.id, note: str(b.note, 300), status: 'requested', createdAt: now() });
+  return json({ ok: true });
+}
+
+async function reviewAction(ctx, id, action, b) {
+  const me = await requireUser(ctx);
+  const r = await db.reviews.get(id);
+  if (!r) fail(404, 'Review not found');
+  const isAuthor = r.authorId === me.id;
+  const isSubject = r.subjectId === me.id;
+  if (action === 'delete') {
+    // the author can take back what they wrote; the subject can cancel a request or remove a review
+    if (!isAuthor && !isSubject) fail(403, 'Not your review');
+    await db.reviews.del(id);
+    return json({ ok: true });
+  }
+  if (action === 'write' || action === 'decline') {
+    if (!isAuthor) fail(403, 'Only the person asked can answer this');
+    if (r.status !== 'requested') fail(400, 'This request was already answered');
+    if (action === 'decline') {
+      r.status = 'declined';
+      r.declinedAt = now();
+    } else {
+      const rating = parseInt(b.rating, 10);
+      if (!(rating >= 1 && rating <= 5)) fail(400, 'Pick 1 to 5 stars');
+      r.rating = rating;
+      r.text = str(b.text, 800, { required: true, name: 'Your review' });
+      r.status = 'written';
+      r.writtenAt = now();
+      r.shown = false; // the subject decides whether it goes on their profile
+      r.seen = false;
+    }
+  }
+  if (action === 'show') {
+    if (!isSubject) fail(403, 'Only the person reviewed can choose this');
+    if (r.status !== 'written') fail(400, 'Nothing to show yet');
+    r.shown = b.shown === true;
+    r.seen = true;
+  }
+  await db.reviews.put(r);
+  return json({ ok: true });
 }
 
 // ---------- friends ----------
@@ -418,6 +521,9 @@ function lobbyDetail(l, uid, people) {
     requestCount: l.requestIds.length,
     sessions: l.recurrence ? sessionsView(l, uid, people, manager, member) : null,
   };
+  if (isAdmin(uid)) {
+    out.flags = (l.flags || []).map((f) => ({ user: miniUser(people[f.userId]), by: miniUser(people[f.by]), reason: f.reason, at: f.at, reported: !!f.reported }));
+  }
   if (manager) {
     out.code = l.visibility === 'code' ? l.code : null;
     out.requests = l.requestIds.map((id) => miniUser(people[id])).filter(Boolean);
@@ -465,7 +571,7 @@ function readLobbyFields(b, existing) {
     game: str(b.game, 80),
     description: str(b.description, 2000),
     categories: pick(b.categories, CATEGORIES, 6),
-    platforms: pick(b.platforms, PLATFORMS),
+    platforms: pick(b.platforms, LOBBY_PLATFORMS),
     scheduledAt,
     maxSlots,
     visibility,
@@ -489,7 +595,7 @@ async function loadLobby(ctx, id) {
   const l = await db.lobbies.get(id);
   if (!l) fail(404, 'Lobby not found');
   const host = await db.users.get(l.hostId);
-  if (!canView(l, ctx.uid, host)) fail(404, 'Lobby not found');
+  if (!isAdmin(ctx.uid) && !canView(l, ctx.uid, host)) fail(404, 'Lobby not found');
   return { l, host };
 }
 
@@ -512,6 +618,7 @@ async function renderLobby(ctx, l) {
   const people = await usersById([
     l.hostId, ...l.coHostIds, ...l.memberIds, ...l.requestIds, ...l.invitedIds, ...(l.discord?.failedIds || []),
     ...(l.sessions || []).flatMap((s) => s.memberIds),
+    ...(l.flags || []).flatMap((f) => [f.userId, f.by]),
   ]);
   return json({ lobby: lobbyDetail(l, ctx.uid, people) });
 }
@@ -755,9 +862,20 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       return saveAndRespond(ctx, req, l, { sync: false });
     }
     case 'POST complete': {
-      needManager();
+      needManager(); needOpen();
+      // The host (or a co-host) can flag anyone who was a problem; admins get told in Discord.
+      const flags = [];
+      for (const f of Array.isArray(b.flags) ? b.flags.slice(0, 100) : []) {
+        const uid = String(f?.userId || '');
+        if (uid === me.id) fail(400, "You can't flag yourself");
+        if (!l.memberIds.includes(uid)) fail(400, 'You can only flag people who are in this lobby');
+        if (flags.some((x) => x.userId === uid)) continue;
+        flags.push({ userId: uid, reason: str(f.reason, 600, { required: true, name: 'A reason for each flag' }), by: me.id, at: now(), reported: false });
+      }
+      l.flags = [...(l.flags || []), ...flags];
       l.status = 'completed';
       l.completedAt = now();
+      await reportLobbyFlags(l, siteOrigin(req)); // failures are retried by the hourly cleanup
       await discord.postToLobby(l, '✅ This lobby was marked **completed** on Create & Connect. These channels will be deleted automatically in 14 days. GG!');
       return saveAndRespond(ctx, req, l, { sync: false });
     }
@@ -786,19 +904,24 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
 
 async function inbox(ctx) {
   const me = await requireUser(ctx);
-  const [lobbies, clips] = await Promise.all([db.lobbies.all(), db.clips.all()]);
+  const [lobbies, clips, reviews] = await Promise.all([db.lobbies.all(), db.clips.all(), db.reviews.all()]);
+  const reviewRequests = reviews.filter((r) => r.authorId === me.id && r.status === 'requested');
+  const newReviews = reviews.filter((r) => r.subjectId === me.id && r.status === 'written' && !r.seen);
   const invites = lobbies.filter((l) => l.status === 'open' && l.invitedIds.includes(me.id) && !l.memberIds.includes(me.id));
   const approvals = lobbies.filter((l) => l.status === 'open' && isManager(l, me.id) && l.requestIds.length);
   const tags = clips.filter((c) => c.collaborators.some((x) => x.id === me.id && x.status === 'pending'));
   const people = await usersById([
     ...me.friendRequestsIn, ...invites.map((l) => l.hostId), ...approvals.flatMap((l) => [l.hostId, ...l.requestIds]),
     ...tags.flatMap((c) => [c.ownerId, ...c.collaborators.map((x) => x.id)]),
+    ...reviewRequests.map((r) => r.subjectId), ...newReviews.map((r) => r.authorId),
   ]);
   return json({
     friendRequests: me.friendRequestsIn.map((id) => publicUser(people[id])).filter(Boolean),
     invites: invites.map((l) => lobbySummary(l, people)),
     approvals: approvals.map((l) => ({ lobby: lobbySummary(l, people), requests: l.requestIds.map((id) => miniUser(people[id])).filter(Boolean) })),
     tags: tags.map((c) => clipView(c, people)),
+    reviewRequests: reviewRequests.map((r) => ({ id: r.id, note: r.note, createdAt: r.createdAt, from: publicUser(people[r.subjectId]) })).filter((r) => r.from),
+    newReviews: newReviews.map((r) => reviewView(r, people, true)),
   });
 }
 
@@ -833,6 +956,9 @@ export default async (req) => {
 
     if (path === '/users' && m === 'GET') return await listUsers(ctx, url);
     if (seg[0] === 'users' && seg[1] && m === 'GET') return await getUser(ctx, seg[1]);
+    if (seg[0] === 'users' && seg[1] && seg[2] === 'review-request' && m === 'POST') return await requestReview(ctx, seg[1], b);
+    if (seg[0] === 'reviews' && seg[1] && m === 'POST' && ['write', 'decline', 'show'].includes(seg[2])) return await reviewAction(ctx, seg[1], seg[2], b);
+    if (seg[0] === 'reviews' && seg[1] && m === 'DELETE') return await reviewAction(ctx, seg[1], 'delete', b);
 
     if (path === '/friends' && m === 'GET') return await listFriends(ctx);
     if (seg[0] === 'friends' && seg[1] && m === 'POST' && ['request', 'accept'].includes(seg[2])) return await friendAction(ctx, seg[1], seg[2]);

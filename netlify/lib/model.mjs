@@ -2,6 +2,8 @@
 import crypto from 'node:crypto';
 
 export const PLATFORMS = ['youtube', 'twitch', 'tiktok', 'instagram', 'twitter', 'substack'];
+// Lobbies are for streams and videos, so text-first platforms aren't offered there.
+export const LOBBY_PLATFORMS = ['youtube', 'twitch', 'tiktok', 'instagram'];
 // Profile banner colours (the frontend maps each key to a gradient).
 export const BANNERS = ['violet', 'blue', 'teal', 'green', 'orange', 'pink', 'red', 'slate'];
 export const CATEGORIES = [

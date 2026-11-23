@@ -81,7 +81,7 @@ const PLATFORM = {
   substack: { label: 'Substack', prefix: 'Substack', placeholder: 'name.substack.com or URL' },
 };
 const platformLabel = (p) => PLATFORM[p]?.label || p;
-const platformOptions = (selected) => (state.config.platforms || []).map((p) => `<option value="${p}" ${selected === p ? 'selected' : ''}>${esc(platformLabel(p))}</option>`).join('');
+const platformOptions = (selected, list = state.config.platforms || []) => list.map((p) => `<option value="${p}" ${selected === p ? 'selected' : ''}>${esc(platformLabel(p))}</option>`).join('');
 
 const REPEAT = {
   none: "Doesn't repeat", daily: 'Every day', weekly: 'Every week', biweekly: 'Every 2 weeks',
@@ -287,7 +287,8 @@ async function refreshInboxCount() {
   if (!state.me) return;
   try {
     const d = await api('GET', '/inbox');
-    state.inboxCount = d.friendRequests.length + d.invites.length + d.tags.length + d.approvals.reduce((n, a) => n + a.requests.length, 0);
+    state.inboxCount = d.friendRequests.length + d.invites.length + d.tags.length + d.approvals.reduce((n, a) => n + a.requests.length, 0) +
+      (d.reviewRequests?.length || 0) + (d.newReviews?.length || 0);
   } catch { state.inboxCount = 0; }
 }
 
@@ -362,7 +363,7 @@ async function viewLobbies(params) {
     <form class="filters" id="f">
       <input type="search" name="q" placeholder="Search title, game, description…" value="${esc(params.get('q') || '')}" />
       <select name="category"><option value="">All categories</option>${state.config.categories.map((c) => `<option ${params.get('category') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <select name="platform"><option value="">All platforms</option>${platformOptions(params.get('platform'))}</select>
+      <select name="platform"><option value="">All platforms</option>${platformOptions(params.get('platform'), state.config.lobbyPlatforms)}</select>
     </form>
     <div class="row vis-filter" style="margin:-8px 0 20px">
       <span class="hint">Lobby type:</span>
@@ -500,6 +501,9 @@ async function viewEditProfile(params) {
         <div class="field"><label for="bio">Bio</label><textarea id="bio" name="bio" maxlength="600" placeholder="Who are you, what's your vibe, when do you usually stream?">${esc(me.bio)}</textarea></div>
         <div class="field"><label for="lf">Looking for <span class="hint">(optional)</span></label><input type="text" id="lf" name="lookingFor" maxlength="300" placeholder="e.g. Co-op horror games on weekends, STEM explainer collabs" value="${esc(me.lookingFor)}" /></div>
         <div class="field">
+          <label class="check"><input type="checkbox" name="showHistory" ${me.showHistory ? 'checked' : ''} /> <span><strong>Show my collab history on my profile</strong><br /><span class="hint">Lists the completed lobbies you took part in, and who with. Only lobbies the viewer is allowed to see are listed.</span></span></label>
+        </div>
+        <div class="field">
           <label>Discord</label>
           <div class="notice ok row" style="justify-content:space-between">
             <span class="user-line">${ICON.discord} <span><strong>@${esc(me.discordUsername)}</strong></span></span>
@@ -545,7 +549,7 @@ async function viewEditProfile(params) {
     try {
       const { user } = await api('PUT', '/me', {
         displayName: fd.get('displayName'), pronouns: fd.get('pronouns'), banner: fd.get('banner'),
-        bio: fd.get('bio'), lookingFor: fd.get('lookingFor'),
+        bio: fd.get('bio'), lookingFor: fd.get('lookingFor'), showHistory: fd.get('showHistory') === 'on',
         platforms: Object.fromEntries((state.config.platforms || []).map((p) => [p, fd.get(`pl-${p}`)])),
         categories: readToggles(form, 'categories'),
       });
@@ -589,6 +593,38 @@ async function viewProfile(id) {
     incoming: `<button class="btn primary" data-friend="accept">Accept friend request</button>`,
     friends: `<button class="btn ghost" data-friend="remove">✓ Friends · Remove</button>`,
   }[d.friendStatus];
+  // Ask this creator to review what you're like to collab with.
+  const reviewBtn = !state.me || self || !state.me.onboarded ? '' : {
+    none: '<button class="btn" id="ask-review">★ Ask for a review</button>',
+    requested: '<button class="btn ghost" disabled title="Waiting for them to write it">★ Review requested</button>',
+    written: '<button class="btn ghost" disabled title="Check your own profile to show or hide it">★ They reviewed you</button>',
+  }[d.reviewStatus] || '';
+  const stars = (n) => `<span class="stars" aria-label="${n} out of 5 stars">${'★'.repeat(n)}<span class="off">${'★'.repeat(5 - n)}</span></span>`;
+  const shownReviews = d.reviews.filter((r) => !self || r.shown);
+  const avg = shownReviews.length ? shownReviews.reduce((n, r) => n + r.rating, 0) / shownReviews.length : 0;
+  const reviewsSection = (self ? d.reviews.length : shownReviews.length) ? `
+    <section class="section">
+      <div class="page-head"><div><h2 style="margin:0">Reviews</h2><p>${shownReviews.length ? `${stars(Math.round(avg))} ${avg.toFixed(1)} from ${shownReviews.length} creator${shownReviews.length === 1 ? '' : 's'}` : ''}${self ? `${shownReviews.length ? ' · ' : ''}You choose which reviews show on your profile.` : ''}</p></div></div>
+      <div class="cards">${d.reviews.map((r) => `
+        <div class="card review${self && !r.shown ? ' hidden-review' : ''}">
+          <div class="row" style="justify-content:space-between">${userLine(r.author, 30)}${stars(r.rating)}</div>
+          <p class="desc-text" style="margin:12px 0 0">${esc(r.text)}</p>
+          <div class="row" style="justify-content:space-between;margin-top:12px">
+            <span class="dim" style="font-size:.8rem">${esc(new Date(r.writtenAt).toLocaleDateString())}</span>
+            ${self ? `<div class="row" style="gap:6px">${r.shown ? `<span class="hint">Shown</span><button class="btn ghost sm" data-show="${esc(r.id)}|0">Hide</button>` : `<span class="hint">Hidden</span><button class="btn primary sm" data-show="${esc(r.id)}|1">Show on profile</button>`}<button class="btn danger sm" data-del-review="${esc(r.id)}">Delete</button></div>` : ''}
+          </div>
+        </div>`).join('')}</div>
+    </section>` : '';
+  const historySection = d.history ? `
+    <section class="section">
+      <div class="page-head"><div><h2 style="margin:0">Collab history</h2><p>${self ? (d.showHistory ? 'Others can see this.' : 'Only you can see this. Turn it on in <a href="#/me/edit">Edit profile</a> to show it.') : `Completed lobbies ${esc(u.displayName)} took part in.`}</p></div></div>
+      ${d.history.length ? `<div class="card">${d.history.map((h) => `
+        <div class="history-row">
+          <div><a href="#/lobbies/${esc(h.id)}"><strong>${esc(h.title)}</strong></a>${h.game ? ` <span class="dim">· ${esc(h.game)}</span>` : ''}${h.recurring ? ' <span class="dim">· 🔁</span>' : ''}
+            <div class="hint">${h.completedAt ? `Completed ${esc(new Date(h.completedAt).toLocaleDateString())} · ` : ''}hosted by ${esc(h.host?.displayName || 'someone')}</div></div>
+          <div class="avatars">${h.with.slice(0, 8).map((x) => `<a href="#/u/${esc(x.id)}" title="${esc(x.displayName)}">${avatar(x, 26)}</a>`).join('')}${h.with.length > 8 ? `<span class="dim">+${h.with.length - 8}</span>` : ''}</div>
+        </div>`).join('')}</div>` : `<div class="empty">No completed collabs yet.</div>`}
+    </section>` : '';
   $app.innerHTML = `
     <div class="card profile-card">
       <div class="profile-banner banner-${esc(u.banner)}"></div>
@@ -599,7 +635,7 @@ async function viewProfile(id) {
           <div class="row" style="gap:10px;margin-top:4px"><span class="muted">${ICON.discord.replace('currentColor', '#8ea1ff')} @${esc(u.discordUsername)}</span><span class="verified">${ICON.check} Verified</span><span class="dim">· ${u.friendCount} friend${u.friendCount === 1 ? '' : 's'}</span></div>
           <div class="platform-links">${Object.entries(u.platforms).map(([p, v]) => `<a class="platform-link ${esc(p)}" href="${esc(v.url)}" target="_blank" rel="noopener" title="${esc(platformLabel(p))}">${ICON[p] || ''} ${esc(v.handle)}</a>`).join('')}</div>
         </div>
-        <div class="actions">${self ? '<a class="btn" href="#/me/edit">Edit profile</a><a class="btn" href="#/friends">Friends</a>' : friendBtn}</div>
+        <div class="actions">${self ? '<a class="btn" href="#/me/edit">Edit profile</a><a class="btn" href="#/friends">Friends</a>' : `${friendBtn || ''}${reviewBtn}`}</div>
       </div>
       <div class="profile-body">
         <div class="chips">${catChips(u.categories)}</div>
@@ -613,7 +649,38 @@ async function viewProfile(id) {
       ${d.clips.length ? `<div class="cards">${d.clips.map((c) => clipCard(c, state.me?.id, u.id)).join('')}</div>` : `<div class="empty">${self ? 'Add videos or streams you did with other creators so people can see how you collab.' : 'No collabs added yet.'}</div>`}
     </section>
 
+    ${reviewsSection}
+    ${historySection}
     ${d.lobbies.length ? `<section class="section"><h2>Open lobbies hosted by ${esc(u.displayName)}</h2><div class="cards">${d.lobbies.map(lobbyCard).join('')}</div></section>` : ''}`;
+
+  document.getElementById('ask-review')?.addEventListener('click', () => {
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>Ask ${esc(u.displayName)} for a review</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p class="muted" style="margin-top:0">They'll be asked how you are to collab with. Once they write it, you choose whether it shows on your profile.</p>
+      <form id="rq">
+        <div class="field"><label for="rq-note">Add a note <span class="hint">(optional)</span></label><input type="text" id="rq-note" name="note" maxlength="300" placeholder="e.g. Thanks for the Mario Party stream last week!" /></div>
+        <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">Send request</button></div>
+      </form>`);
+    el.querySelector('#rq').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('.btn.primary');
+      btn.disabled = true;
+      try {
+        await api('POST', `/users/${u.id}/review-request`, { note: e.target.note.value });
+        close(); toast('Review request sent'); route();
+      } catch (err) { toast(err.message, true); btn.disabled = false; }
+    });
+  });
+  $app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', act(async () => {
+    const [id, on] = b.dataset.show.split('|');
+    await api('POST', `/reviews/${id}/show`, { shown: on === '1' });
+    toast(on === '1' ? 'Review is now on your profile' : 'Review hidden'); route();
+  })));
+  $app.querySelectorAll('[data-del-review]').forEach((b) => b.addEventListener('click', act(async () => {
+    if (!await askConfirm({ title: 'Delete this review?', message: 'It will be removed for good, from your profile and from your list.', confirmLabel: 'Delete', danger: true })) return;
+    await api('DELETE', `/reviews/${b.dataset.delReview}`);
+    toast('Review deleted'); route();
+  })));
 
   $app.querySelectorAll('[data-play]').forEach((b) => b.addEventListener('click', () => playClip(d.clips.find((c) => c.id === b.dataset.play))));
   $app.querySelectorAll('[data-del-clip]').forEach((b) => b.addEventListener('click', act(async () => {
@@ -689,7 +756,7 @@ async function viewLobbyForm(id) {
         <div class="field"><label for="d">Description</label><textarea id="d" name="description" maxlength="2000" placeholder="What's the plan, what are you looking for in collaborators, any requirements?">${esc(l?.description)}</textarea></div>
         <div class="grid-2">
           <div class="field"><label for="s"><span id="slots-label">Total slots</span> <span class="hint">(including you)</span></label><input type="number" id="s" name="maxSlots" min="2" max="100" value="${esc(l?.maxSlots || 4)}" /></div>
-          <div class="field"><label>Streaming / posting on</label>${chipToggles('platforms', state.config.platforms || [], l?.platforms || Object.keys(state.me.platforms), (p) => `${ICON[p] || ''}${esc(platformLabel(p))}`)}</div>
+          <div class="field"><label>Streaming / posting on</label>${chipToggles('platforms', state.config.lobbyPlatforms || [], (l?.platforms || Object.keys(state.me.platforms)).filter((p) => (state.config.lobbyPlatforms || []).includes(p)), (p) => `${ICON[p] || ''}${esc(platformLabel(p))}`)}</div>
         </div>
         <div class="field"><label>Categories <span class="hint">(up to 6)</span></label>${chipToggles('categories', state.config.categories, l?.categories || [])}</div>
         <div class="field">
@@ -868,6 +935,49 @@ async function viewLobby(id) {
       </div></div>`;
   }
 
+  /** Mark completed, optionally flagging people who were a problem (admins are told privately). */
+  function completeModal() {
+    const others = l.members.filter((u) => u.id !== state.me?.id);
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>Mark this lobby as completed?</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p class="muted" style="margin-top:0">${l.recurrence
+        ? 'No new dates will open, and its Discord channels and category will be deleted in 14 days. You can reopen it before then.'
+        : 'Its Discord channels will be deleted in 14 days. You can reopen it before then.'}</p>
+      ${others.length ? `
+        <div class="field">
+          <label>Did anyone cause problems? <span class="hint">(optional)</span></label>
+          <p class="hint" style="margin:0 0 10px">Flags go privately to the Create and Connect admins. The person isn't told, and this lobby won't appear in their collab history.</p>
+          <div class="flag-list">${others.map((u) => `
+            <div class="flag-item">
+              <label class="check"><input type="checkbox" data-flag="${esc(u.id)}" /> <span class="row" style="gap:8px">${avatar(u, 24)} ${esc(u.displayName)} <span class="dim">@${esc(u.discordUsername)}</span></span></label>
+              <textarea data-reason="${esc(u.id)}" maxlength="600" placeholder="What happened? Admins will read this." hidden></textarea>
+            </div>`).join('')}</div>
+        </div>` : ''}
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-close>Not yet</button><button type="button" class="btn primary" id="do-complete">Mark completed</button></div>`);
+    el.querySelectorAll('[data-flag]').forEach((cb) => cb.addEventListener('change', () => {
+      const ta = el.querySelector(`[data-reason="${cb.dataset.flag}"]`);
+      ta.hidden = !cb.checked;
+      if (cb.checked) ta.focus();
+      el.querySelector('#do-complete').textContent = el.querySelector('[data-flag]:checked') ? 'Complete & send flags' : 'Mark completed';
+    }));
+    el.querySelector('#do-complete').addEventListener('click', act(async () => {
+      const flags = [...el.querySelectorAll('[data-flag]:checked')].map((cb) => ({ userId: cb.dataset.flag, reason: el.querySelector(`[data-reason="${cb.dataset.flag}"]`).value.trim() }));
+      const missing = flags.find((f) => !f.reason);
+      if (missing) { el.querySelector(`[data-reason="${missing.userId}"]`).focus(); toast('Add a short reason for each person you flag', true); return; }
+      const r = await api('POST', `${base}/complete`, { flags });
+      close();
+      l = r.lobby; render();
+      toast(flags.length ? 'Lobby completed. Flags sent to the admins.' : 'Lobby completed. GG!');
+    }));
+  }
+
+  function adminBox() {
+    if (!l.flags) return '';
+    return `<div class="card admin-box"><h2>🚩 Flags <span class="hint">(admins only)</span></h2>${l.flags.length ? l.flags.map((f) => `
+      <div class="inbox-item"><div>${userLine(f.user, 28)}<p class="muted" style="margin:6px 0 0">${esc(f.reason)}</p><div class="hint">flagged by ${esc(f.by?.displayName || '?')} · ${esc(fmtDate(f.at))}${f.reported ? '' : ' · not yet posted to Discord'}</div></div></div>`).join('') : '<p class="dim" style="margin:0">No flags on this lobby.</p>'}</div>`;
+  }
+
+  const base = `/lobbies/${l.id}`;
   function render() {
     me = l.me;
     full = l.memberCount >= l.maxSlots;
@@ -905,10 +1015,10 @@ async function viewLobby(id) {
           <div class="card">${joinBox()}</div>
           ${discordBox()}
           ${managerBox()}
+          ${adminBox()}
         </aside>
       </div>`;
 
-    const base = `/lobbies/${l.id}`;
     const on = (sel, fn) => { const el = document.querySelector(sel); if (el) el.addEventListener('click', run(fn)); };
     on('#join', () => withServerCheck(async () => {
       const r = await api('POST', `${base}/join`);
@@ -925,17 +1035,7 @@ async function viewLobby(id) {
       return r;
     });
     on('#regen', async () => { const r = await api('POST', `${base}/regenerate-code`); toast('New code generated'); return r; });
-    on('#complete', async () => {
-      const ok = await askConfirm({
-        title: 'Mark this lobby as completed?',
-        message: l.recurrence
-          ? 'No new dates will open, and its Discord channels and category will be deleted in 14 days. You can reopen it before then.'
-          : 'Its Discord channels will be deleted in 14 days. You can reopen it before then.',
-        confirmLabel: 'Mark completed',
-      });
-      if (!ok) return;
-      return api('POST', `${base}/complete`);
-    });
+    on('#complete', () => completeModal());
     on('#reopen', () => api('POST', `${base}/reopen`));
     on('#cancel', async () => {
       const ok = await askConfirm({
@@ -997,6 +1097,8 @@ async function viewInbox() {
     ${section('Join requests for your lobbies', d.approvals.flatMap((a) => a.requests.map((u) => `<div class="inbox-item"><div>${userLine(u, 32)}<div class="hint" style="margin-top:4px">wants to join <a href="#/lobbies/${esc(a.lobby.id)}">${esc(a.lobby.title)}</a></div></div><div class="row"><button class="btn primary sm" data-approve="${esc(a.lobby.id)}|${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(a.lobby.id)}|${esc(u.id)}">Deny</button></div></div>`)), 'No pending requests.')}
     ${section('Lobby invites', d.invites.map((l) => `<div class="inbox-item"><div><a href="#/lobbies/${esc(l.id)}"><strong>${esc(l.title)}</strong></a><div class="hint">from ${esc(l.host?.displayName)} · ${l.memberCount}/${l.maxSlots} · ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'anytime'}</div></div><a class="btn primary sm" href="#/lobbies/${esc(l.id)}">View &amp; join</a></div>`), 'No invites right now.')}
     ${section('Friend requests', d.friendRequests.map((u) => `<div class="inbox-item">${userLine(u, 32)}<div class="row"><button class="btn primary sm" data-faccept="${esc(u.id)}">Accept</button><button class="btn ghost sm" data-fdecline="${esc(u.id)}">Decline</button></div></div>`), 'No friend requests.')}
+    ${section('Review requests', d.reviewRequests.map((r) => `<div class="inbox-item"><div>${userLine(r.from, 32)}<div class="hint" style="margin-top:4px">wants a review of what they're like to collab with${r.note ? ` · “${esc(r.note)}”` : ''}</div></div><div class="row"><button class="btn primary sm" data-write="${esc(r.id)}">Write review</button><button class="btn ghost sm" data-rdecline="${esc(r.id)}">No thanks</button></div></div>`), 'No review requests.')}
+    ${d.newReviews.length ? section('New reviews of you', d.newReviews.map((r) => `<div class="inbox-item"><div>${userLine(r.author, 32)}<div style="margin-top:6px"><span class="stars">${'★'.repeat(r.rating)}<span class="off">${'★'.repeat(5 - r.rating)}</span></span></div><p class="muted" style="margin:6px 0 0">${esc(r.text)}</p></div><div class="row"><button class="btn primary sm" data-rshow="${esc(r.id)}">Show on my profile</button><button class="btn ghost sm" data-rhide="${esc(r.id)}">Keep hidden</button></div></div>`), '') : ''}
     ${section('Tagged in collabs', d.tags.map((c) => `<div class="inbox-item"><div><strong>${esc(c.title)}</strong><div class="hint">${esc(c.owner?.displayName)} says you were in this · <a href="${esc(c.url)}" target="_blank" rel="noopener">watch</a></div></div><div class="row"><button class="btn primary sm" data-confirm="${esc(c.id)}">Yes, that's me</button><button class="btn ghost sm" data-untag="${esc(c.id)}">Remove tag</button></div></div>`), 'Nothing to confirm.')}`;
   const bind = (attr, fn) => $app.querySelectorAll(`[data-${attr}]`).forEach((b) => b.addEventListener('click', act(async () => { await fn(b.dataset[attr.replace(/-./g, (m) => m[1].toUpperCase())]); route(); })));
   bind('approve', (v) => { const [lid, uid] = v.split('|'); return api('POST', `/lobbies/${lid}/approve/${uid}`); });
@@ -1005,6 +1107,36 @@ async function viewInbox() {
   bind('fdecline', (id) => api('DELETE', `/friends/${id}`));
   bind('confirm', (id) => api('POST', `/clips/${id}/confirm`));
   bind('untag', (id) => api('POST', `/clips/${id}/untag`));
+  bind('rdecline', (id) => api('POST', `/reviews/${id}/decline`));
+  bind('rshow', (id) => api('POST', `/reviews/${id}/show`, { shown: true }));
+  bind('rhide', (id) => api('POST', `/reviews/${id}/show`, { shown: false }));
+  $app.querySelectorAll('[data-write]').forEach((b) => b.addEventListener('click', () => {
+    const r = d.reviewRequests.find((x) => x.id === b.dataset.write);
+    writeReviewModal(r);
+  }));
+}
+
+function writeReviewModal(r) {
+  const { el, close } = openModal(`
+    <div class="modal-head"><h2>Review ${esc(r.from.displayName)}</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+    <p class="muted" style="margin-top:0">How are they to collab with? Be honest and kind. They decide whether it shows on their profile, and your name is shown with it.</p>
+    <form id="wr">
+      <div class="field"><label>Rating</label>
+        <div class="star-pick">${[5, 4, 3, 2, 1].map((n) => `<input type="radio" id="st${n}" name="rating" value="${n}" required /><label for="st${n}" title="${n} star${n === 1 ? '' : 's'}">★</label>`).join('')}</div>
+      </div>
+      <div class="field"><label for="wr-text">Your review</label><textarea id="wr-text" name="text" maxlength="800" required placeholder="e.g. Super organised, showed up on time, great energy on stream. Would collab again!"></textarea></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">Send review</button></div>
+    </form>`);
+  el.querySelector('#wr').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const btn = e.target.querySelector('.btn.primary');
+    btn.disabled = true;
+    try {
+      await api('POST', `/reviews/${r.id}/write`, { rating: fd.get('rating'), text: fd.get('text') });
+      close(); toast('Review sent'); route();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
 }
 
 async function viewFriends() {

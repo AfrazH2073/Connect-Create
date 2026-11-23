@@ -12,6 +12,7 @@ process.env.DISCORD_CLIENT_ID = '900000000000000002';
 const calls = [];
 const channels = new Map();
 const notInServer = new Set();
+const messages = [];
 let chanSeq = 1;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
@@ -45,7 +46,11 @@ globalThis.fetch = async (url, opts = {}) => {
     Object.assign(ch, body);
     return reply(200, { id: m[1] });
   }
-  if (/\/channels\/\d+\/messages$/.test(u.pathname)) return reply(200, { id: '1' });
+  if ((m = u.pathname.match(/\/channels\/(\d+)\/messages$/))) {
+    if (!channels.has(m[1]) && !String(m[1]).startsWith('7')) return reply(404, { message: 'Unknown Channel', code: 10003 });
+    messages.push({ channelId: m[1], ...body });
+    return reply(200, { id: '1' });
+  }
   return reply(404, { message: 'unmocked' });
 };
 
@@ -447,6 +452,110 @@ await test('old lobbies: channels in a shared category move into the lobby\'s ow
   assert.equal(r.lobby.discord.error, null);
   const voiceId = r.lobby.discord.voiceUrl.split('/').pop();
   assert.equal(channels.get(voiceId).parent_id, after.discord.categoryId);
+});
+
+await test('lobbies only offer YouTube, Twitch, TikTok and Instagram', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Platforms', platforms: ['youtube', 'twitter', 'substack', 'tiktok'] });
+  assert.deepEqual(lobby.platforms, ['youtube', 'tiktok']);
+  const cfg = (await anon('/me')).config;
+  assert.deepEqual(cfg.lobbyPlatforms, ['youtube', 'twitch', 'tiktok', 'instagram']);
+});
+
+await test('reviews: ask, write, choose to show, others only see shown ones', async () => {
+  const req = await alice.call('POST', `/users/${carol.id}/review-request`, { note: 'Thanks for the stream!' });
+  assert.equal(req.status, 200);
+  assert.equal((await alice.call('POST', `/users/${carol.id}/review-request`)).status, 400, 'no duplicate requests');
+  assert.equal((await alice.call('POST', `/users/${alice.id}/review-request`)).status, 400, 'cannot ask yourself');
+  assert.equal((await alice.call('GET', `/users/${carol.id}`)).reviewStatus, 'requested');
+
+  const inbox = await carol.call('GET', '/inbox');
+  const rq = inbox.reviewRequests.find((r) => r.from.id === alice.id);
+  assert.equal(rq.note, 'Thanks for the stream!');
+  assert.equal((await bob.call('POST', `/reviews/${rq.id}/write`, { rating: 5, text: 'x' })).status, 403, 'only the person asked can write it');
+  assert.equal((await carol.call('POST', `/reviews/${rq.id}/write`, { rating: 9, text: 'x' })).status, 400, 'rating 1-5');
+  await carol.call('POST', `/reviews/${rq.id}/write`, { rating: 4, text: 'Great energy, always on time.' });
+
+  // hidden until alice shows it
+  assert.equal((await bob.call('GET', `/users/${alice.id}`)).reviews.length, 0);
+  const own = await alice.call('GET', `/users/${alice.id}`);
+  assert.equal(own.reviews[0].shown, false);
+  assert.equal((await alice.call('GET', '/inbox')).newReviews.length, 1, 'alice is told about the new review');
+  assert.equal((await carol.call('POST', `/reviews/${rq.id}/show`, { shown: true })).status, 403, 'only the subject chooses');
+  await alice.call('POST', `/reviews/${rq.id}/show`, { shown: true });
+  const seen = await bob.call('GET', `/users/${alice.id}`);
+  assert.equal(seen.reviews[0].rating, 4);
+  assert.equal(seen.reviews[0].author.id, carol.id);
+  assert.equal(seen.reviews[0].shown, undefined, 'visitors do not see show/hide state');
+  assert.equal((await alice.call('GET', '/inbox')).newReviews.length, 0);
+
+  // declining blocks re-asking for 30 days
+  await bob.call('POST', `/users/${carol.id}/review-request`);
+  const r2 = (await carol.call('GET', '/inbox')).reviewRequests.find((r) => r.from.id === bob.id);
+  await carol.call('POST', `/reviews/${r2.id}/decline`);
+  assert.match((await bob.call('POST', `/users/${carol.id}/review-request`)).error, /30 days/);
+});
+
+await test('complete with flags: admins told in a private Discord channel; flagged people lose that history', async () => {
+  const dan = await makeUser('dan');
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Flag Night', visibility: 'public', maxSlots: 5 });
+  for (const u of [alice, bob, dan]) await u.call('POST', `/lobbies/${lobby.id}/join`);
+
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/complete`, { flags: [] })).status, 403, 'only hosts complete');
+  assert.equal((await host.call('POST', `/lobbies/${lobby.id}/complete`, { flags: [{ userId: dan.id }] })).status, 400, 'a reason is required');
+  assert.equal((await host.call('POST', `/lobbies/${lobby.id}/complete`, { flags: [{ userId: carol.id, reason: 'x' }] })).status, 400, 'only members');
+  const before = messages.length;
+  const done = await host.call('POST', `/lobbies/${lobby.id}/complete`, { flags: [{ userId: dan.id, reason: 'Kept griefing and was rude in voice' }] });
+  assert.equal(done.lobby.status, 'completed');
+  assert.equal(done.lobby.flags, undefined, 'hosts do not get the flag list back');
+
+  const adminCh = [...channels.entries()].find(([, c]) => c.name === 'create-connect-reports');
+  assert.ok(adminCh, 'admin channel created');
+  assert.equal(adminCh[1].permission_overwrites[0].deny, String(1n << 10n), 'hidden from @everyone (admins still see it)');
+  const report = messages.slice(before).find((m) => m.channelId === adminCh[0]);
+  assert.match(report.content, /Flag Night/);
+  assert.match(report.content, /@dan/);
+  assert.match(report.content, /Kept griefing/);
+  assert.deepEqual(report.allowed_mentions, { parse: [] }, 'no pings');
+
+  // history: shown when opted in, hides lobbies where you were flagged
+  await alice.call('PUT', '/me', { displayName: 'alice', platforms: { twitch: 'alice' }, categories: ['Gaming'], showHistory: true });
+  const ah = await bob.call('GET', `/users/${alice.id}`);
+  assert.ok(ah.history.some((h) => h.id === lobby.id));
+  assert.ok(ah.history.find((h) => h.id === lobby.id).with.some((x) => x.id === host.id));
+  assert.equal((await alice.call('GET', `/users/${bob.id}`)).history, null, 'bob has not opted in');
+  assert.ok((await bob.call('GET', `/users/${bob.id}`)).history, 'you always see your own');
+  await dan.call('PUT', '/me', { displayName: 'dan', platforms: { twitch: 'dan' }, categories: ['Gaming'], showHistory: true });
+  assert.ok(!(await bob.call('GET', `/users/${dan.id}`)).history.some((h) => h.id === lobby.id), 'flagged lobby left out');
+
+  // admins (ADMIN_DISCORD_IDS) see flags on the lobby page
+  process.env.ADMIN_DISCORD_IDS = carol.id;
+  const asAdmin = await carol.call('GET', `/lobbies/${lobby.id}`);
+  assert.equal(asAdmin.lobby.flags[0].user.id, dan.id);
+  delete process.env.ADMIN_DISCORD_IDS;
+});
+
+await test('flags that could not reach Discord are retried by the hourly cleanup', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Retry Flags', visibility: 'public' });
+  await bob.call('POST', `/lobbies/${lobby.id}/join`);
+  // someone deleted the admin channel; the bot makes a new one
+  const old = [...channels.entries()].find(([, c]) => c.name === 'create-connect-reports')[0];
+  channels.delete(old);
+  await host.call('POST', `/lobbies/${lobby.id}/complete`, { flags: [{ userId: bob.id, reason: 'No-show' }] });
+  const fresh = [...channels.entries()].find(([, c]) => c.name === 'create-connect-reports');
+  assert.ok(fresh && fresh[0] !== old, 'new admin channel');
+  assert.equal((await db.lobbies.get(lobby.id)).flags[0].reported, true);
+
+  // Discord down: stays unreported, then cleanup sends it
+  const { lobby: l2 } = await host.call('POST', '/lobbies', { title: 'Retry Flags 2', visibility: 'public' });
+  await bob.call('POST', `/lobbies/${l2.id}/join`);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => (/messages$/.test(new URL(url).pathname) ? new Response('{}', { status: 500 }) : realFetch(url, opts));
+  await host.call('POST', `/lobbies/${l2.id}/complete`, { flags: [{ userId: bob.id, reason: 'No-show again' }] });
+  globalThis.fetch = realFetch;
+  assert.equal((await db.lobbies.get(l2.id)).flags[0].reported, false);
+  await runCleanup();
+  assert.equal((await db.lobbies.get(l2.id)).flags[0].reported, true);
+  assert.ok(messages.some((m) => /No-show again/.test(m.content)));
 });
 
 console.log(`\n${passed} tests passed (${calls.length} fake Discord calls)`);

@@ -1,5 +1,6 @@
 // Scheduled Function (free on Netlify), runs every hour:
 //  - deletes a lobby's Discord channels + category 14 days after it was marked completed
+//  - re-sends host flags that couldn't reach the admin channel
 //  - moves channels made before per-lobby categories into the lobby's own category
 //  - for repeating lobbies: opens the next dates for sign-up, and deletes each date's
 //    channels 14 days after that date (or right away if the host skipped it)
@@ -7,6 +8,7 @@
 import { db } from '../lib/db.mjs';
 import { deleteLobbyChannels, deleteRoom, hasChannels, moveIntoOwnCategory } from '../lib/discord.mjs';
 import { syncSessionSchedule } from '../lib/model.mjs';
+import { reportLobbyFlags } from '../lib/reports.mjs';
 
 const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000;
 
@@ -26,6 +28,8 @@ export async function runCleanup(nowMs = Date.now()) {
           }
         }
       }
+      // Flags that couldn't reach the admins' Discord channel earlier
+      if ((l.flags || []).some((f) => !f.reported)) await reportLobbyFlags(l, (process.env.SITE_URL || process.env.URL || '').replace(/\/$/, ''));
       // Older lobbies whose channels sit in a shared category get their own one.
       if (l.status !== 'cancelled' && hasChannels(l)) await moveIntoOwnCategory(l);
       if (l.status === 'completed' && l.completedAt && hasChannels(l) && nowMs - Date.parse(l.completedAt) >= TWO_WEEKS) {
