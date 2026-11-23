@@ -125,16 +125,33 @@ const readToggles = (root, name) => [...root.querySelectorAll(`[data-toggle="${n
 
 // ---------- modal ----------
 
-function openModal(html, { wide = false } = {}) {
+function openModal(html, { wide = false, onClose } = {}) {
   const root = document.getElementById('modal-root');
   root.innerHTML = `<div class="modal-backdrop"><div class="modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
   const backdrop = root.firstElementChild;
-  const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKey); };
+  const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKey); onClose?.(); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   backdrop.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
   return { el: backdrop.firstElementChild, close };
+}
+
+/** In-site replacement for the browser's confirm(). Resolves true only if they click the confirm button. */
+function askConfirm({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Never mind', danger = false }) {
+  return new Promise((resolve) => {
+    let answer = false;
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>${esc(title)}</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p class="muted" style="margin:0 0 22px">${esc(message)}</p>
+      <div class="row" style="justify-content:flex-end">
+        <button type="button" class="btn ghost" data-close>${esc(cancelLabel)}</button>
+        <button type="button" class="btn ${danger ? 'danger-solid' : 'primary'}" id="confirm-yes">${esc(confirmLabel)}</button>
+      </div>`, { onClose: () => resolve(answer) });
+    const yes = el.querySelector('#confirm-yes');
+    yes.addEventListener('click', () => { answer = true; close(); });
+    yes.focus();
+  });
 }
 
 function embedUrl(c) {
@@ -600,7 +617,7 @@ async function viewProfile(id) {
 
   $app.querySelectorAll('[data-play]').forEach((b) => b.addEventListener('click', () => playClip(d.clips.find((c) => c.id === b.dataset.play))));
   $app.querySelectorAll('[data-del-clip]').forEach((b) => b.addEventListener('click', act(async () => {
-    if (!confirm('Remove this from your showcase?')) return;
+    if (!await askConfirm({ title: 'Remove this collab?', message: "It will be taken off your showcase and the profiles of anyone tagged in it.", confirmLabel: 'Remove', danger: true })) return;
     await api('DELETE', `/clips/${b.dataset.delClip}`);
     toast('Removed'); route();
   })));
@@ -908,15 +925,30 @@ async function viewLobby(id) {
       return r;
     });
     on('#regen', async () => { const r = await api('POST', `${base}/regenerate-code`); toast('New code generated'); return r; });
-    on('#complete', async () => { if (!confirm(l.recurrence ? 'Mark this repeating lobby as completed? No new dates will open, and its Discord channels and category will be deleted in 14 days.' : 'Mark this lobby as completed? Its Discord channels will be deleted in 14 days.')) return; return api('POST', `${base}/complete`); });
+    on('#complete', async () => {
+      const ok = await askConfirm({
+        title: 'Mark this lobby as completed?',
+        message: l.recurrence
+          ? 'No new dates will open, and its Discord channels and category will be deleted in 14 days. You can reopen it before then.'
+          : 'Its Discord channels will be deleted in 14 days. You can reopen it before then.',
+        confirmLabel: 'Mark completed',
+      });
+      if (!ok) return;
+      return api('POST', `${base}/complete`);
+    });
     on('#reopen', () => api('POST', `${base}/reopen`));
     on('#cancel', async () => {
-      if (!confirm('Cancel this lobby? It will be removed and its Discord channels deleted right away.')) return;
+      const ok = await askConfirm({
+        title: 'Cancel this lobby?',
+        message: 'It will be removed for everyone and its Discord channels deleted right away. This can’t be undone.',
+        confirmLabel: 'Cancel lobby', cancelLabel: 'Keep lobby', danger: true,
+      });
+      if (!ok) return;
       await api('DELETE', base); toast('Lobby cancelled'); location.hash = '#/lobbies';
     });
     document.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/approve/${b.dataset.approve}`))));
     document.querySelectorAll('[data-deny]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/deny/${b.dataset.deny}`))));
-    document.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', run(async () => { if (!confirm('Remove this person from the lobby?')) return; return api('POST', `${base}/kick/${b.dataset.kick}`); })));
+    document.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', run(async () => { if (!await askConfirm({ title: 'Remove this person?', message: 'They will be taken out of the lobby and lose access to its Discord channels.', confirmLabel: 'Remove', danger: true })) return; return api('POST', `${base}/kick/${b.dataset.kick}`); })));
     document.querySelectorAll('[data-signup]').forEach((b) => b.addEventListener('click', run(() => withServerCheck(async () => {
       const r = await api('POST', `${base}/signup/${b.dataset.signup}`);
       toast("You're signed up for that date!");
@@ -925,7 +957,12 @@ async function viewLobby(id) {
     }))));
     document.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/withdraw/${b.dataset.withdraw}`))));
     document.querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', run(async () => {
-      if (!confirm('Skip this date for everyone? Its Discord channels (if any) are deleted now.')) return;
+      const ok = await askConfirm({
+        title: 'Skip this date?',
+        message: 'It will be cancelled for everyone, and its Discord channels (if any) are deleted now. You can restore the date later.',
+        confirmLabel: 'Skip date', danger: true,
+      });
+      if (!ok) return;
       return api('POST', `${base}/skip/${b.dataset.skip}`);
     })));
     document.querySelectorAll('[data-unskip]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/unskip/${b.dataset.unskip}`))));
