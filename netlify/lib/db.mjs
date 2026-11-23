@@ -4,6 +4,7 @@
 // Set CC_MEMORY_DB=1 to use an in-memory store instead (local testing only).
 
 import { getStore } from '@netlify/blobs';
+import { normalizeLobby } from './model.mjs';
 
 const memory = new Map();
 
@@ -50,10 +51,10 @@ export const db = {
     all: () => all('users'),
   },
   lobbies: {
-    get: (id) => get('lobbies', id),
+    get: async (id) => normalizeLobby(await get('lobbies', id)),
     put: (l) => put('lobbies', l.id, l),
     del: (id) => del('lobbies', id),
-    all: () => all('lobbies'),
+    all: async () => (await all('lobbies')).map(normalizeLobby),
   },
   // Uploaded profile pictures: { type, data (base64), v }
   avatars: {

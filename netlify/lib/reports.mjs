@@ -24,7 +24,7 @@ export async function reportLobbyFlags(lobby, siteUrl) {
     for (const [by, flags] of byReporter) {
       const lines = [
         `🚩 ${who(people[by], by)} flagged ${flags.length === 1 ? 'someone' : `${flags.length} people`} when completing **${lobby.title}**`,
-        `Lobby: ${siteUrl}/#/lobbies/${lobby.id} · ${lobby.visibility} · host ${who(people[lobby.hostId], lobby.hostId)}`,
+        `Lobby: ${siteUrl}/#/lobbies/${lobby.id} · ${lobby.visibility}${lobby.approval ? ' + approval' : ''} · host ${who(people[lobby.hostId], lobby.hostId)}`,
         `Members: ${lobby.memberIds.map((id) => people[id]?.discordUsername ? `@${people[id].discordUsername}` : id).join(', ')}`,
         '',
         ...flags.map((f) => `• ${who(people[f.userId], f.userId)}\n  > ${f.reason.replace(/\n+/g, ' ')}`),

@@ -476,7 +476,7 @@ function lobbySummary(l, people) {
   const next = l.recurrence ? nextSession(l) : null;
   return {
     id: l.id, title: l.title, game: l.game, place: l.place || '', description: l.description.slice(0, 220), categories: l.categories,
-    platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility,
+    platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
     status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
     recurrence: recurrenceView(l),
     next: next ? { key: next.key, at: next.at, count: next.memberIds.length } : null,
@@ -545,7 +545,10 @@ function lobbyDetail(l, uid, people) {
 }
 
 function readLobbyFields(b, existing) {
-  const visibility = VISIBILITIES.includes(b.visibility) ? b.visibility : existing?.visibility || 'public';
+  // "approval" as a type is still accepted from older clients: Public + approval.
+  const legacyApproval = b.visibility === 'approval';
+  const visibility = legacyApproval ? 'public' : VISIBILITIES.includes(b.visibility) ? b.visibility : existing?.visibility || 'public';
+  const approval = visibility !== 'code' && (legacyApproval || (b.approval !== undefined ? b.approval === true : !!existing?.approval));
   const maxSlots = Math.max(2, Math.min(100, parseInt(b.maxSlots, 10) || existing?.maxSlots || 4));
   let scheduledAt = null;
   if (b.scheduledAt) {
@@ -576,6 +579,7 @@ function readLobbyFields(b, existing) {
     scheduledAt,
     maxSlots,
     visibility,
+    approval,
     recurrence,
   };
 }
@@ -641,6 +645,9 @@ async function listLobbies(ctx, url) {
   // ?visibility=public,code -> any of those types (empty = all)
   const vis = (url.searchParams.get('visibility') || '').split(',').filter((v) => VISIBILITIES.includes(v));
   if (vis.length) lobbies = lobbies.filter((l) => vis.includes(l.visibility));
+  // ?approval=1 -> only lobbies that need a host's OK, ?approval=0 -> only ones you can join straight away
+  const appr = url.searchParams.get('approval');
+  if (appr === '1' || appr === '0') lobbies = lobbies.filter((l) => !!l.approval === (appr === '1'));
   for (const l of lobbies) syncSessionSchedule(l); // in memory only: so "next date" is current
   const when = (l) => (l.recurrence && nextSession(l)?.at) || l.scheduledAt || l.createdAt;
   lobbies.sort((a, b) => when(a).localeCompare(when(b)));
@@ -751,15 +758,16 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
       await requireInServer(me);
       const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
-      if (manager || l.invitedIds.includes(me.id)) direct();
+      if (manager) direct();
+      // With approval on, everyone else (invited people and friends too) asks and a host decides.
+      else if (l.approval) { if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
+      else if (l.invitedIds.includes(me.id)) direct();
       else if (l.visibility === 'public') direct();
       else if (l.visibility === 'friends') direct(); // canView already checked friendship
       else if (l.visibility === 'code') {
         checkCodeLimit(me);
         if (String(b.code || '').trim() !== l.code) { await recordWrongCode(me); fail(403, 'Wrong code'); }
         direct();
-      } else if (l.visibility === 'approval') {
-        if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id);
       } else fail(403, 'You need an invite to join this lobby');
       break;
     }
@@ -776,6 +784,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       if (!l.requestIds.includes(arg)) fail(404, 'No such request');
       if (!hasRoom()) fail(400, 'Lobby is full — raise the slot count first');
       removeFrom('requestIds', arg);
+      removeFrom('invitedIds', arg);
       l.memberIds.push(arg);
       break;
     }
@@ -803,9 +812,9 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
       if (!isMember(l, me.id)) {
         // Open lobbies let you sign up straight away; the others need the usual step first.
-        const canJoin = manager || l.invitedIds.includes(me.id) || l.visibility === 'public' || l.visibility === 'friends';
+        const canJoin = manager || (!l.approval && (l.invitedIds.includes(me.id) || l.visibility === 'public' || l.visibility === 'friends'));
         if (!canJoin) {
-          fail(403, l.visibility === 'approval' ? 'Request to join first. Once a host approves you, you can pick dates.'
+          fail(403, l.approval ? 'Request to join first. Once a host approves you, you can pick dates.'
             : l.visibility === 'code' ? 'Enter the lobby code first, then pick your dates.'
             : 'You need an invite to join this lobby');
         }

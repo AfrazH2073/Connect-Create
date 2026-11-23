@@ -11,7 +11,19 @@ export const CATEGORIES = [
   'Music', 'Art', 'Comedy', 'Fitness', 'Cooking', 'Travel', 'ASMR', 'Podcasts',
   'Sports', 'Esports', 'Speedrunning', 'Horror', 'Vlogs', 'Reviews',
 ];
-export const VISIBILITIES = ['public', 'approval', 'code', 'private', 'friends'];
+export const VISIBILITIES = ['public', 'friends', 'private', 'code'];
+
+/**
+ * "Needs approval" is an on/off setting on top of Public, Friends or Private
+ * (never Code: having the code is enough). Lobbies saved before that change used
+ * visibility "approval", which meant Public + approval.
+ */
+export function normalizeLobby(l) {
+  if (!l) return l;
+  if (l.visibility === 'approval') { l.visibility = 'public'; l.approval = true; }
+  l.approval = l.visibility !== 'code' && l.approval === true;
+  return l;
+}
 
 export const newId = () => crypto.randomBytes(9).toString('base64url');
 export const newCode = () => String(crypto.randomInt(0, 10000)).padStart(4, '0');
@@ -148,7 +160,6 @@ export function canView(lobby, uid, host) {
   if (isManager(lobby, uid) || isMember(lobby, uid) || (uid && lobby.requestIds.includes(uid))) return true;
   switch (lobby.visibility) {
     case 'public':
-    case 'approval':
     case 'code':
       return true;
     case 'private':

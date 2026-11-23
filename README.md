@@ -12,14 +12,15 @@ Everything runs on free tiers: **Netlify** (hosting, serverless functions, sched
 - **Collab history.** An opt-in profile setting lists the completed lobbies you were in, and who with. A lobby only counts if it had 2+ people, the host marked it completed, and nobody flagged you in it.
 - **Flags.** When a host or co-host marks a lobby completed, they can flag anyone who caused problems, with a reason. The flagged person isn't told. Flags are posted to a Discord channel only server admins can see, and that lobby is left out of the flagged person's history.
 - **Collab showcase.** Add YouTube or Twitch videos, VODs, and clips. You have to confirm that you own the content or have the owner's explicit permission. Anyone you tag is asked to confirm, and once they do it shows on their profile too. Videos play inline.
-- **Lobbies** with five visibility modes:
-  | Mode | Who can see it | How you join |
+- **Lobbies** with four types:
+  | Type | Who can see it | How you join |
   |---|---|---|
   | Public | Everyone | Click Join and you take a slot |
-  | Approval | Everyone | You go into a request queue; the host or a co-host approves |
-  | Code | Everyone | You enter a 4-digit code. Only the host and co-hosts can see it, and they can regenerate it |
-  | Private | Only invited creators | By invite |
   | Friends | Only the host's friends | Friends join directly |
+  | Private | Only invited creators | By invite |
+  | Code | Everyone | You enter a 4-digit code. Only the host and co-hosts can see it, and they can regenerate it |
+
+  Public, Friends and Private lobbies can also turn on **Needs approval**. Then everyone who can see the lobby, invited people and friends included, goes into a request queue, and the host or a co-host approves them. Code lobbies never use approval, because having the code is enough. Lobbies made with the old "Approval" type now read as Public with approval on.
 - Co-hosts, invites, kick, slot limits, scheduled time, and mark completed or reopen.
 - **Repeating lobbies.** Pick a first date and a repeat (every day, every 1–4 weeks, or every month, optionally until a date). The next 6 dates are always open, and people sign up for just the dates they can make. Slots are per date. Hosts can skip a single date (or restore it). Times stay the same local time across daylight-saving changes.
 - **Discord automation.** Every lobby gets its **own category** in the server. At 2+ members the bot creates a hidden text channel and a voice channel in it that only lobby members can see. For repeating lobbies, each date gets its own pair once 2+ people sign up for that date, and the names start with the date, e.g. `2026-12-07-smash-bros`. Access updates when people join, leave, sign up, withdraw, or get removed.

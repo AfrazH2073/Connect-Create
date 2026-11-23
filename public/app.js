@@ -65,11 +65,10 @@ const ICON = {
 };
 
 const VIS = {
-  public: { label: 'Public', desc: 'Anyone can open it and take a slot.' },
-  approval: { label: 'Approval', desc: 'Anyone can request a slot; a host approves.' },
-  code: { label: 'Code', desc: 'Anyone can view it; joining needs a 4-digit code.' },
-  private: { label: 'Private', desc: 'Only people you invite can see and join.' },
+  public: { label: 'Public', desc: 'Anyone can see it and join.' },
   friends: { label: 'Friends', desc: 'Only your Create & Connect friends can see and join.' },
+  private: { label: 'Private', desc: 'Only people you invite can see and join.' },
+  code: { label: 'Code', desc: 'Anyone can see it; joining needs a 4-digit code.' },
 };
 
 const PLATFORM = {
@@ -103,7 +102,7 @@ const userLabel = (u, size = 34) => u ? `
   <div class="user-line">${avatar(u, size)}
     <div class="names"><div><strong>${esc(u.displayName)}</strong></div><div class="handle">@${esc(u.discordUsername)}</div></div>
   </div>` : '';
-const visTag = (v) => `<span class="tag ${esc(v)}">${esc(VIS[v]?.label || v)}</span>`;
+const visTag = (v, approval) => `<span class="tag ${esc(v)}">${esc(VIS[v]?.label || v)}</span>${approval ? '<span class="tag approval" title="A host approves who joins">Approval</span>' : ''}`;
 const platformChips = (ps) => (ps || []).map((p) => `<span class="chip p-${esc(p)}">${ICON[p] || ''}${esc(platformLabel(p))}</span>`).join('');
 const catChips = (cs) => (cs || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('');
 const loginUrl = '/api/auth/login';
@@ -300,7 +299,7 @@ function lobbyCard(l) {
   const pct = Math.round((count / l.maxSlots) * 100);
   const when = l.recurrence ? (l.next ? fmtDate(l.next.at) : 'No upcoming dates') : l.scheduledAt ? fmtDate(l.scheduledAt) : '';
   return `<a class="card lobby-card" href="#/lobbies/${esc(l.id)}">
-    <div class="row" style="justify-content:space-between">${visTag(l.visibility)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}<span class="dim" style="font-size:.85rem">${when ? '🗓 ' + esc(when) : 'Anytime'}</span></div>
+    <div class="row" style="justify-content:space-between"><span class="row" style="gap:6px">${visTag(l.visibility, l.approval)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}</span><span class="dim" style="font-size:.85rem">${when ? '🗓 ' + esc(when) : 'Anytime'}</span></div>
     <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3>${l.place ? `<div class="place-line">📍 ${esc(l.place)}</div>` : ''}${l.recurrence ? `<div class="repeat-line">🔁 ${esc(repeatText(l.recurrence))}</div>` : ''}</div>
     ${l.description ? `<p class="desc">${esc(l.description)}</p>` : ''}
     <div class="chips">${platformChips(l.platforms)}${catChips(l.categories)}</div>
@@ -368,8 +367,9 @@ async function viewLobbies(params) {
     <div class="row vis-filter" style="margin:-8px 0 20px">
       <span class="hint">Lobby type:</span>
       <div class="chips" id="visf">${Object.entries(VIS)
-        .filter(([k]) => state.me || ['public', 'approval', 'code'].includes(k)) // private/friends lobbies are only visible when logged in
+        .filter(([k]) => state.me || ['public', 'code'].includes(k)) // private/friends lobbies are only visible when logged in
         .map(([k, o]) => `<button type="button" class="chip" data-vis="${k}" aria-pressed="false" title="${esc(o.desc)}">${o.label}</button>`).join('')}</div>
+      <select id="apprf" aria-label="Approval" style="width:auto;padding:6px 10px;font-size:.85rem"><option value="">Any joining</option><option value="0">Join instantly</option><option value="1">Needs approval</option></select>
       <button type="button" class="btn ghost sm" id="vis-clear" hidden>Show all types</button>
     </div>
     <div id="list"><div class="loading">Loading…</div></div>`;
@@ -381,7 +381,9 @@ async function viewLobbies(params) {
     b.setAttribute('aria-pressed', b.classList.contains('on'));
     load();
   }));
-  clearBtn.addEventListener('click', () => { visBtns.forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); }); load(); });
+  const apprSel = document.getElementById('apprf');
+  apprSel.addEventListener('change', () => load());
+  clearBtn.addEventListener('click', () => { visBtns.forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); }); apprSel.value = ''; load(); });
 
   const codeForm = document.getElementById('codefind');
   codeForm.addEventListener('submit', async (e) => {
@@ -403,7 +405,8 @@ async function viewLobbies(params) {
     for (const [k, v] of fd) if (v) qs.set(k, v);
     const vis = visBtns.filter((b) => b.classList.contains('on')).map((b) => b.dataset.vis);
     if (vis.length) qs.set('visibility', vis.join(','));
-    clearBtn.hidden = !vis.length;
+    if (apprSel.value) qs.set('approval', apprSel.value);
+    clearBtn.hidden = !vis.length && !apprSel.value;
     const { lobbies } = await api('GET', `/lobbies?${qs}`);
     document.getElementById('list').innerHTML = lobbies.length ? `<div class="cards">${lobbies.map(lobbyCard).join('')}</div>` : '<div class="empty">No lobbies match. Try different filters — or create one!</div>';
   };
@@ -764,6 +767,8 @@ async function viewLobbyForm(id) {
           <label>Who can see and join?</label>
           <div class="vis-grid">${Object.entries(VIS).map(([k, o]) => `<label class="vis-opt"><input type="radio" name="visibility" value="${k}" ${v === k ? 'checked' : ''} /><strong>${o.label}</strong><span>${o.desc}</span></label>`).join('')}</div>
           <p class="hint" id="vis-hint" style="margin-top:8px"></p>
+          <label class="check" id="approval-row" style="margin-top:12px"><input type="checkbox" name="approval" ${l?.approval ? 'checked' : ''} /> <span><strong>Needs approval</strong><br /><span class="hint">People ask to join and you or a co-host approve them, invited people and friends included.</span></span></label>
+          <p class="hint" id="approval-off" hidden>Code lobbies don't use approval: anyone with the code gets in.</p>
         </div>
         ${!l || l.me.isHost ? `<div class="field"><label>Co-hosts <span class="hint">(can approve, invite, edit &amp; see the code)</span></label><div id="cohosts"></div></div>` : ''}
         ${!l ? `<div class="field" id="invite-field" hidden><label>Invite creators <span class="hint">(only invited creators can see a Private lobby)</span></label><div id="invites"></div></div>` : ''}
@@ -777,6 +782,8 @@ async function viewLobbyForm(id) {
   const updateHint = () => {
     const val = form.visibility.value;
     if (inviteField) inviteField.hidden = val !== 'private';
+    document.getElementById('approval-row').hidden = val === 'code';
+    document.getElementById('approval-off').hidden = val !== 'code';
     hint.textContent = val === 'code' ? 'A 4-digit code is generated after you save. Only you and co-hosts can see it, and you can regenerate it anytime.' : val === 'private' ? 'Only invited creators will see this lobby at all.' : val === 'friends' ? 'Only people on your friends list will see this lobby.' : '';
   };
   form.addEventListener('change', updateHint); updateHint();
@@ -809,7 +816,7 @@ async function viewLobbyForm(id) {
     const when = fd.get('scheduledAt');
     const payload = {
       title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
-      visibility: fd.get('visibility'), scheduledAt: when ? new Date(when).toISOString() : null,
+      visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt: when ? new Date(when).toISOString() : null,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
       repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -854,10 +861,10 @@ async function viewLobby(id) {
     if (me.isMember) return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>` : `<div class="notice ok">You're in! 🎉</div><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><button class="btn ghost sm" id="leave" style="margin-top:12px">Cancel request</button>`;
     if (full && !l.recurrence) return `<div class="notice">This lobby is full.</div>`;
+    if (l.approval && !me.isManager) return `${me.invited ? '<div class="notice ok">You were invited!</div>' : ''}<p class="muted"${me.invited ? ' style="margin-top:12px"' : ''}>A host approves who gets ${l.recurrence ? 'in' : 'a slot'}.${l.recurrence ? ' Once you\'re approved, you can pick your dates.' : ''}</p><div class="row"><button class="btn primary" id="join">Request to join</button>${me.invited ? '<button class="btn ghost sm" id="decline">Decline</button>' : ''}</div>`;
     if (l.recurrence && ['public', 'friends'].includes(l.visibility) && !me.invited) return `<p class="muted" style="margin:0">Pick the dates you can make in the <strong>Dates</strong> list. Signing up for a date joins the lobby.</p>`;
     if (me.invited) return `<div class="notice ok">You were invited!</div><div class="row" style="margin-top:12px"><button class="btn primary" id="join">Join lobby</button><button class="btn ghost sm" id="decline">Decline</button></div>`;
     switch (l.visibility) {
-      case 'approval': return `<p class="muted">The host approves who gets a slot.</p><button class="btn primary" id="join">Request to join</button>`;
       case 'code': {
         const pre = state.pendingCode?.id === l.id ? state.pendingCode.code : '';
         return `<p class="muted">${pre ? 'Code found — hit Join to take a slot.' : 'Enter the 4-digit code from the host.'}</p><form class="row" id="codef"><input type="text" name="code" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required value="${esc(pre)}" style="width:110px;letter-spacing:.3em;text-align:center;font-weight:700" /><button class="btn primary">Join</button></form>`;
@@ -889,11 +896,11 @@ async function viewLobby(id) {
     const sessions = l.sessions || [];
     // Who may sign up straight away (others must join / be approved / enter the code first).
     const canPick = !!state.me && state.me.onboarded && open &&
-      (me.isMember || me.isManager || me.invited || ['public', 'friends'].includes(l.visibility));
+      (me.isMember || me.isManager || (!l.approval && (me.invited || ['public', 'friends'].includes(l.visibility))));
     const gate = !state.me ? 'Log in to sign up for dates.'
       : !open ? ''
       : canPick ? ''
-      : l.visibility === 'approval' ? 'Request to join first. Once a host approves you, you can pick dates.'
+      : l.approval ? 'Request to join first. Once a host approves you, you can pick dates.'
       : l.visibility === 'code' ? 'Enter the lobby code first, then pick your dates.'
       : '';
     const row = (s) => {
@@ -989,12 +996,12 @@ async function viewLobby(id) {
       <div class="lobby-layout" style="margin-top:12px">
         <div>
           <div class="card">
-            <div class="row">${visTag(l.visibility)}${l.status !== 'open' ? `<span class="tag completed">${esc(l.status)}</span>` : ''}${platformChips(l.platforms)}</div>
+            <div class="row">${visTag(l.visibility, l.approval)}${l.status !== 'open' ? `<span class="tag completed">${esc(l.status)}</span>` : ''}${platformChips(l.platforms)}</div>
             ${l.game ? `<div style="color:var(--accent-2);font-weight:600;margin-top:14px">${esc(l.game)}</div>` : ''}
             <h1 class="lobby-title">${esc(l.title)}</h1>
             <div class="meta-row">${l.place ? `<span>📍 ${esc(l.place)}</span>` : ''}${l.recurrence
               ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtDate(l.next.at))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
-              : `<span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.visibility === 'approval' && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
+              : `<span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>
             ${l.description ? `<p class="desc-text" style="margin-top:18px">${esc(l.description)}</p>` : ''}
           </div>

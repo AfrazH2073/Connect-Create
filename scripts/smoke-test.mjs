@@ -123,7 +123,7 @@ await test('public lobby: join creates Discord text+voice at 2 members', async (
 });
 
 await test('approval lobby: request queue, host approves', async () => {
-  const { lobby } = await host.call('POST', '/lobbies', { title: 'Podcast', visibility: 'approval', maxSlots: 4 });
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Podcast', visibility: 'public', approval: true, maxSlots: 4 });
   const r = await bob.call('POST', `/lobbies/${lobby.id}/join`);
   assert.equal(r.lobby.me.isMember, false);
   assert.equal(r.lobby.me.requested, true);
@@ -243,11 +243,63 @@ await test('must be in the Discord server to join or host', async () => {
   assert.equal(ok.lobby.me.isMember, true, 'joins once they are in the server');
 });
 
+await test('approval is a setting on Public, Friends and Private, never Code', async () => {
+  // Friends + approval: a friend still has to ask
+  const fr = (await host.call('POST', '/lobbies', { title: 'Friends, approved', visibility: 'friends', approval: true })).lobby;
+  assert.equal(fr.visibility, 'friends');
+  assert.equal(fr.approval, true);
+  const req = await bob.call('POST', `/lobbies/${fr.id}/join`);
+  assert.equal(req.lobby.me.isMember, false);
+  assert.equal(req.lobby.me.requested, true);
+  assert.equal((await alice.call('GET', `/lobbies/${fr.id}`)).status, 404, 'non-friends still cannot see it');
+  await host.call('POST', `/lobbies/${fr.id}/approve/${bob.id}`);
+  assert.ok((await bob.call('GET', `/lobbies/${fr.id}`)).lobby.me.isMember);
+
+  // Private + approval: an invite lets you see it and ask
+  const pr = (await host.call('POST', '/lobbies', { title: 'Private, approved', visibility: 'private', approval: true, invitedIds: [alice.id] })).lobby;
+  assert.equal((await bob.call('GET', `/lobbies/${pr.id}`)).status, 404);
+  const ask = await alice.call('POST', `/lobbies/${pr.id}/join`);
+  assert.equal(ask.lobby.me.isMember, false);
+  assert.equal(ask.lobby.me.requested, true);
+  const ok = await host.call('POST', `/lobbies/${pr.id}/approve/${alice.id}`);
+  assert.ok(ok.lobby.members.some((m) => m.id === alice.id));
+  assert.equal(ok.lobby.invited.length, 0, 'approved invitee leaves the invited list');
+
+  // Code ignores approval: the code gets you straight in
+  const cd = (await host.call('POST', '/lobbies', { title: 'Code, no approval', visibility: 'code', approval: true })).lobby;
+  assert.equal(cd.approval, false);
+  const inNow = await bob.call('POST', `/lobbies/${cd.id}/join`, { code: cd.code });
+  assert.equal(inNow.lobby.me.isMember, true);
+
+  // Turning approval off lets people join straight away again
+  const off = await host.call('PUT', `/lobbies/${fr.id}`, { title: 'Friends, approved', visibility: 'friends', approval: false });
+  assert.equal(off.lobby.approval, false);
+  // Edits that don't mention approval keep it as it was
+  const keep = await host.call('PUT', `/lobbies/${pr.id}`, { title: 'Private, renamed' });
+  assert.equal(keep.lobby.approval, true);
+});
+
+await test('lobbies saved with the old "approval" type read as Public + approval', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Old approval lobby', visibility: 'public' });
+  const raw = await db.lobbies.get(lobby.id);
+  raw.visibility = 'approval'; delete raw.approval;
+  await db.lobbies.put(raw);
+  const view = (await bob.call('GET', `/lobbies/${lobby.id}`)).lobby;
+  assert.equal(view.visibility, 'public');
+  assert.equal(view.approval, true);
+  const r = await bob.call('POST', `/lobbies/${lobby.id}/join`);
+  assert.equal(r.lobby.me.requested, true);
+  assert.equal((await db.lobbies.get(lobby.id)).visibility, 'public', 'saved in the new shape');
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);
-  assert.deepEqual([...await types('public,approval')].sort(), ['approval', 'public']);
+  assert.deepEqual([...await types('public,code')].sort(), ['code', 'public']);
   assert.ok((await types('')).size >= 3, 'no filter = every type');
+  const needs = (await host.call('GET', '/lobbies?approval=1')).lobbies;
+  assert.ok(needs.length && needs.every((l) => l.approval), 'approval=1 lists only lobbies that need approval');
+  assert.ok((await host.call('GET', '/lobbies?approval=0')).lobbies.every((l) => !l.approval));
   assert.ok(!(await bob.call('GET', '/lobbies?visibility=private')).lobbies.some((l) => l.title === 'Secret'), 'filter never reveals hidden private lobbies');
 });
 
@@ -396,7 +448,7 @@ await test('repeating lobby: per-date sign-ups, dated Discord channels in one ca
 await test('repeating lobby: approval still applies, and cleanup rolls dates forward', async () => {
   const first = new Date(Date.now() + 3600e3);
   const { lobby } = await host.call('POST', '/lobbies', {
-    title: 'Weekly Podcast', visibility: 'approval', scheduledAt: first.toISOString(), repeat: 'weekly', timeZone: 'UTC',
+    title: 'Weekly Podcast', visibility: 'public', approval: true, scheduledAt: first.toISOString(), repeat: 'weekly', timeZone: 'UTC',
   });
   const d1 = lobby.sessions[0];
   const denied = await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
