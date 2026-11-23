@@ -39,6 +39,12 @@ globalThis.fetch = async (url, opts = {}) => {
     return reply(204);
   }
   if ((m = u.pathname.match(/\/channels\/(\d+)$/)) && method === 'DELETE') { channels.delete(m[1]); return reply(200, {}); }
+  if ((m = u.pathname.match(/\/channels\/(\d+)$/)) && method === 'PATCH') {
+    const ch = channels.get(m[1]);
+    if (!ch) return reply(404, { message: 'Unknown Channel', code: 10003 });
+    Object.assign(ch, body);
+    return reply(200, { id: m[1] });
+  }
   if (/\/channels\/\d+\/messages$/.test(u.pathname)) return reply(200, { id: '1' });
   return reply(404, { message: 'unmocked' });
 };
@@ -412,6 +418,35 @@ await test('repeating lobby: approval still applies, and cleanup rolls dates for
   const monthly = await host.call('PUT', `/lobbies/${lobby.id}`, { title: 'Weekly Podcast', scheduledAt: first.toISOString(), repeat: 'monthly', timeZone: 'UTC' });
   const gaps = monthly.lobby.sessions.slice(1).map((s, i) => Date.parse(s.at) - Date.parse(monthly.lobby.sessions[i].at));
   assert.ok(gaps.every((g) => g >= 28 * 864e5), 'dates follow the new monthly schedule');
+});
+
+await test('old lobbies: channels in a shared category move into the lobby\'s own category', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Old Lobby', visibility: 'public' });
+  // Simulate channels made by the old version, sitting under a shared "Lobbies" category.
+  const shared = '700000000000000001';
+  channels.set('700000000000000002', { name: 'old-lobby', type: 0, parent_id: shared, overwrites: new Map([[host.id, '1']]) });
+  channels.set('700000000000000003', { name: '🔊 Old Lobby', type: 2, parent_id: shared, overwrites: new Map([[host.id, '1']]) });
+  const stored = await db.lobbies.get(lobby.id);
+  stored.discord = { textId: '700000000000000002', voiceId: '700000000000000003', memberIds: [host.id] };
+  await db.lobbies.put(stored);
+
+  await runCleanup(); // the hourly job fixes it without anyone touching the lobby
+  const after = await db.lobbies.get(lobby.id);
+  const cat = channels.get(after.discord.categoryId);
+  assert.equal(cat.type, 4);
+  assert.equal(cat.name, 'Old Lobby');
+  assert.equal(channels.get('700000000000000002').parent_id, after.discord.categoryId);
+  assert.equal(channels.get('700000000000000003').parent_id, after.discord.categoryId);
+  assert.equal(channels.get('700000000000000002').lock_permissions, false, 'keeps members-only access');
+
+  // A channel someone deleted by hand gets made again on the next sync.
+  channels.delete('700000000000000003');
+  after.discord.parentId = null;
+  await db.lobbies.put(after);
+  const r = await host.call('POST', `/lobbies/${lobby.id}/sync-discord`);
+  assert.equal(r.lobby.discord.error, null);
+  const voiceId = r.lobby.discord.voiceUrl.split('/').pop();
+  assert.equal(channels.get(voiceId).parent_id, after.discord.categoryId);
 });
 
 console.log(`\n${passed} tests passed (${calls.length} fake Discord calls)`);

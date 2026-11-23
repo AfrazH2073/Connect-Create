@@ -215,11 +215,41 @@ async function ensureCategory(lobby, d) {
   return d.categoryId;
 }
 
+/**
+ * Channels made before each lobby had its own category (e.g. under a shared "Lobbies"
+ * category): create the lobby's category and move them into it. If someone deleted a
+ * channel by hand in Discord, forget it so it gets made again.
+ */
+export async function moveIntoOwnCategory(lobby) {
+  const d = lobby.discord;
+  if (!d || d.deletedAt || !discordConfigured()) return false;
+  const rooms = lobby.recurrence ? (lobby.sessions || []).map((s) => s.discord).filter(Boolean) : [d];
+  const ids = (room) => ['textId', 'voiceId'].filter((k) => room[k] && !room.deletedAt);
+  const stray = rooms.filter((room) => ids(room).length && (!d.categoryId || room.parentId !== d.categoryId));
+  if (!stray.length) return false;
+  const parentId = await ensureCategory(lobby, d);
+  for (const room of stray) {
+    for (const k of ids(room)) {
+      try {
+        // lock_permissions false keeps the members-only access on the channel.
+        await bot('PATCH', `/channels/${room[k]}`, { parent_id: parentId, lock_permissions: false });
+      } catch (e) {
+        if (e.status !== 404) throw e;
+        room[k] = null; // gone from Discord; syncRoom will recreate it
+        room.memberIds = [];
+      }
+    }
+    room.parentId = parentId;
+  }
+  return true;
+}
+
 /** Create (once) and sync one text + voice pair. `room` is where the IDs are saved. */
 async function syncRoom(room, { name, voiceName, topic, parentId, memberIds, welcome }) {
   const guild = process.env.DISCORD_GUILD_ID;
   const base = { parent_id: parentId || undefined, permission_overwrites: hidden() };
   // Each ID is saved as soon as it exists, so a failure halfway never leaves an orphan channel.
+  room.parentId = parentId || null;
   if (!room.textId) {
     const text = await bot('POST', `/guilds/${guild}/channels`, { ...base, name, type: 0, topic: topic.slice(0, 1024) });
     room.textId = text.id;
@@ -276,6 +306,7 @@ export async function syncLobbyChannels(lobby, siteUrl) {
       const sessions = activeSessions(lobby);
       if (!sessions.length && !d.categoryId) { d.error = null; return d; }
       const parentId = await ensureCategory(lobby, d);
+      await moveIntoOwnCategory(lobby);
       const failed = new Set();
       for (const s of sessions) {
         s.discord ||= {};
@@ -296,8 +327,8 @@ export async function syncLobbyChannels(lobby, siteUrl) {
         d.error = null; // nothing to do yet; channels open once a 2nd person joins
         return d;
       }
-      // Lobbies whose channels were made before categories existed keep their old spot.
-      const parentId = d.textId && !d.categoryId ? undefined : await ensureCategory(lobby, d);
+      const parentId = await ensureCategory(lobby, d);
+      await moveIntoOwnCategory(lobby); // older channels sitting in another category
       await syncRoom(d, {
         name: slug,
         voiceName: `🔊 ${lobby.title}`,
