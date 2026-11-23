@@ -301,7 +301,7 @@ function lobbyCard(l) {
   const when = l.recurrence ? (l.next ? fmtDate(l.next.at) : 'No upcoming dates') : l.scheduledAt ? fmtDate(l.scheduledAt) : '';
   return `<a class="card lobby-card" href="#/lobbies/${esc(l.id)}">
     <div class="row" style="justify-content:space-between">${visTag(l.visibility)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}<span class="dim" style="font-size:.85rem">${when ? '🗓 ' + esc(when) : 'Anytime'}</span></div>
-    <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3>${l.recurrence ? `<div class="repeat-line">🔁 ${esc(repeatText(l.recurrence))}</div>` : ''}</div>
+    <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3>${l.place ? `<div class="place-line">📍 ${esc(l.place)}</div>` : ''}${l.recurrence ? `<div class="repeat-line">🔁 ${esc(repeatText(l.recurrence))}</div>` : ''}</div>
     ${l.description ? `<p class="desc">${esc(l.description)}</p>` : ''}
     <div class="chips">${platformChips(l.platforms)}${catChips(l.categories)}</div>
     <div class="foot">${userLabel(l.host, 26)}<span class="slots" title="${l.recurrence ? 'Signed up for the next date' : 'Slots taken'}">${count}/${l.maxSlots}<span class="slot-bar"><i style="width:${pct}%"></i></span></span></div>
@@ -361,7 +361,7 @@ async function viewLobbies(params) {
       ${state.me ? `<a href="#/lobbies?mine=1" class="${mine ? 'active' : ''}">My lobbies</a>` : ''}
     </div>
     <form class="filters" id="f">
-      <input type="search" name="q" placeholder="Search title, game, description…" value="${esc(params.get('q') || '')}" />
+      <input type="search" name="q" placeholder="Search title, game, place, description…" value="${esc(params.get('q') || '')}" />
       <select name="category"><option value="">All categories</option>${state.config.categories.map((c) => `<option ${params.get('category') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
       <select name="platform"><option value="">All platforms</option>${platformOptions(params.get('platform'), state.config.lobbyPlatforms)}</select>
     </form>
@@ -745,6 +745,7 @@ async function viewLobbyForm(id) {
       <form class="card" id="lf">
         <div class="field"><label for="t">Title</label><input type="text" id="t" name="title" required maxlength="80" placeholder="Mario Party Friday night chaos" value="${esc(l?.title)}" /></div>
         <div class="field"><label for="g">Game / activity <span class="hint">(optional)</span></label><input type="text" id="g" name="game" maxlength="80" placeholder="Mario Party Superstars" value="${esc(l?.game)}" /></div>
+        <div class="field"><label for="pl">Where <span class="hint">(optional, a general area, not an address)</span></label><input type="text" id="pl" name="place" maxlength="60" list="place-ideas" placeholder="Online, San Diego, CA…" value="${esc(l?.place)}" /><datalist id="place-ideas"><option value="Online"></option></datalist></div>
         <div class="repeat-box">
           <div class="grid-3">
             <div class="field"><label for="w"><span id="w-label">When</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><input type="datetime-local" id="w" name="scheduledAt" value="${esc(toLocalInput(l?.scheduledAt))}" /></div>
@@ -807,7 +808,7 @@ async function viewLobbyForm(id) {
     const fd = new FormData(form);
     const when = fd.get('scheduledAt');
     const payload = {
-      title: fd.get('title'), game: fd.get('game'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
+      title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
       visibility: fd.get('visibility'), scheduledAt: when ? new Date(when).toISOString() : null,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
       repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null,
@@ -991,7 +992,7 @@ async function viewLobby(id) {
             <div class="row">${visTag(l.visibility)}${l.status !== 'open' ? `<span class="tag completed">${esc(l.status)}</span>` : ''}${platformChips(l.platforms)}</div>
             ${l.game ? `<div style="color:var(--accent-2);font-weight:600;margin-top:14px">${esc(l.game)}</div>` : ''}
             <h1 class="lobby-title">${esc(l.title)}</h1>
-            <div class="meta-row">${l.recurrence
+            <div class="meta-row">${l.place ? `<span>📍 ${esc(l.place)}</span>` : ''}${l.recurrence
               ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtDate(l.next.at))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
               : `<span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.visibility === 'approval' && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>

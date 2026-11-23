@@ -475,7 +475,7 @@ function recurrenceView(l) {
 function lobbySummary(l, people) {
   const next = l.recurrence ? nextSession(l) : null;
   return {
-    id: l.id, title: l.title, game: l.game, description: l.description.slice(0, 220), categories: l.categories,
+    id: l.id, title: l.title, game: l.game, place: l.place || '', description: l.description.slice(0, 220), categories: l.categories,
     platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility,
     status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
     recurrence: recurrenceView(l),
@@ -569,6 +569,7 @@ function readLobbyFields(b, existing) {
   return {
     title: str(b.title, 80, { required: true, name: 'Title' }),
     game: str(b.game, 80),
+    place: str(b.place, 60),
     description: str(b.description, 2000),
     categories: pick(b.categories, CATEGORIES, 6),
     platforms: pick(b.platforms, LOBBY_PLATFORMS),
@@ -634,7 +635,7 @@ async function listLobbies(ctx, url) {
   let lobbies = all.filter((l) => canView(l, ctx.uid, hosts[l.hostId]));
   if (mine) lobbies = lobbies.filter((l) => isMember(l, ctx.uid) || isManager(l, ctx.uid) || l.requestIds.includes(ctx.uid));
   else lobbies = lobbies.filter((l) => l.status === status);
-  if (q) lobbies = lobbies.filter((l) => [l.title, l.game, l.description].join(' ').toLowerCase().includes(q));
+  if (q) lobbies = lobbies.filter((l) => [l.title, l.game, l.place, l.description].join(' ').toLowerCase().includes(q));
   if (cat) lobbies = lobbies.filter((l) => l.categories.includes(cat));
   if (plat) lobbies = lobbies.filter((l) => l.platforms.includes(plat));
   // ?visibility=public,code -> any of those types (empty = all)
