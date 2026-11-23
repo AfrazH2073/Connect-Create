@@ -228,13 +228,26 @@ await test('must be in the Discord server to join or host', async () => {
   assert.equal(ok.lobby.me.isMember, true, 'joins once they are in the server');
 });
 
-await test('"Add me to the server" login returns you to the lobby', async () => {
-  const login = await api(new Request('https://site.test/api/auth/login?return=%23%2Flobbies%2Fabc123'));
-  const cookies = login.headers.getSetCookie().map((c) => c.split(';')[0]);
-  assert.ok(cookies.some((c) => c.startsWith('cc_return=')));
+async function oauthLogin(query) {
+  const login = await api(new Request(`https://site.test/api/auth/login${query}`));
+  const cookies = login.headers.getSetCookie().map((c) => c.split(';')[0]).filter((c) => !c.endsWith('='));
   const state = cookies.find((c) => c.startsWith('cc_oauth_state=')).split('=')[1];
+  const before = calls.length;
   const cb = await api(new Request(`https://site.test/api/auth/callback?code=x&state=${state}`, { headers: { cookie: cookies.join('; ') } }));
-  assert.equal(cb.headers.get('location'), '/#/lobbies/abc123?joined_server=1');
+  const added = calls.slice(before).some((c) => /^PUT \/api\/v10\/guilds\/\d+\/members\//.test(c));
+  return { login, cookies, location: cb.headers.get('location'), added };
+}
+
+await test('plain login only checks the server, never adds you (no Discord DM)', async () => {
+  const r = await oauthLogin('');
+  assert.equal(r.added, false);
+  assert.ok(!r.cookies.some((c) => c.startsWith('cc_join=')));
+});
+
+await test('"Add me to the server" adds you and returns you to the lobby', async () => {
+  const r = await oauthLogin('?join=1&return=%23%2Flobbies%2Fabc123');
+  assert.equal(r.added, true);
+  assert.equal(r.location, '/#/lobbies/abc123?joined_server=1');
   const evil = await api(new Request('https://site.test/api/auth/login?return=https%3A%2F%2Fevil.example'));
   assert.ok(!evil.headers.getSetCookie().some((c) => c.startsWith('cc_return=')), 'ignores off-site return targets');
 });

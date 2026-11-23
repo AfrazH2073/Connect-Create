@@ -139,7 +139,7 @@ function showJoinServerPrompt(inviteUrl, retry) {
   const { el, close } = openModal(`
     <div class="modal-head"><h2 class="row" style="gap:10px">${ICON.discord} Join our Discord first</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
     <p class="muted" style="margin-top:0">Every lobby gets a private text and voice channel in the <strong>Create and Connect</strong> Discord server, so you need to be in the server before you can join or host a lobby.</p>
-    <a class="btn discord lg" style="width:100%" href="${loginUrl}?return=${back}">${ICON.discord} Add me to the server</a>
+    <a class="btn discord lg" style="width:100%" href="${loginUrl}?join=1&return=${back}">${ICON.discord} Add me to the server</a>
     <p class="hint" style="margin:8px 0 0;text-align:center">You'll approve it on Discord, then come straight back here. <strong>Using more than one Discord account?</strong> Switch Discord to the account you want first — whichever account Discord is on is the one that gets added.</p>
     ${inviteUrl ? `<p class="hint" style="text-align:center;margin:14px 0 0">Or use the <a href="${esc(inviteUrl)}" target="_blank" rel="noopener">server invite link</a>.</p>` : ''}
     <div class="menu-sep" style="margin:18px 0"></div>
@@ -363,7 +363,8 @@ async function viewEditProfile(params) {
             <span class="user-line">${avatar(me, 30)} <span><strong>@${esc(me.discordUsername)}</strong></span></span>
             <span class="verified">${ICON.check} Verified via Discord login</span>
           </div>
-          ${me.inServer === false ? '<p class="hint" style="margin-top:8px">⚠️ We couldn\'t add you to the Create and Connect Discord server automatically. Log out and back in, or ask the server owner for an invite — you need to be in the server to get lobby channels.</p>' : '<p class="hint" style="margin-top:8px">This is read from your Discord login, so it can\'t be faked. You\'ve been added to the Create and Connect server.</p>'}
+          <p class="hint" style="margin-top:8px">This is read from your Discord login, so it can't be faked.
+            ${me.inServer === true ? "You're in the Create and Connect Discord server." : me.inServer === false ? "You're not in the Create and Connect Discord server yet — you'll be asked to join when you join or host your first lobby (that's where lobby chats and voice happen)." : ''}</p>
         </div>
         <div class="field"><label for="dn">Display name</label><input type="text" id="dn" name="displayName" maxlength="40" value="${esc(me.displayName)}" required /></div>
         <div class="field">

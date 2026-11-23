@@ -52,6 +52,9 @@ async function login(req) {
   // Optional page to land on afterwards, e.g. the lobby you were joining. Only in-site hash routes.
   const back = params.get('return') || '';
   if (/^#\/[\w\-/?=&.%]{0,200}$/.test(back)) cookies.push(`cc_return=${encodeURIComponent(back)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${sec}`);
+  // Only add people to the Discord server when they clicked "Add me to the server".
+  // (Discord DMs everyone an app adds, so we don't do it silently on every login.)
+  if (params.get('join') === '1') cookies.push(`cc_join=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${sec}`);
   return redirect(url, cookies);
 }
 
@@ -71,7 +74,10 @@ async function callback(req) {
     console.error(e);
     return redirect('/#/?error=login_failed');
   }
-  const inServer = await discord.addToGuild(du.id, token.access_token);
+  const wantsJoin = parseCookies(req).cc_join === '1';
+  const inServer = wantsJoin
+    ? await discord.addToGuild(du.id, token.access_token)
+    : await discord.isGuildMember(du.id); // just check; null = couldn't tell
 
   let user = await db.users.get(du.id);
   const isNew = !user;
@@ -98,6 +104,7 @@ async function callback(req) {
     accountsCookie([user.id, ...readAccounts(req)], isSecure(req)),
     'cc_oauth_state=; Path=/; Max-Age=0',
     'cc_return=; Path=/; Max-Age=0',
+    'cc_join=; Path=/; Max-Age=0',
   ]);
 }
 
