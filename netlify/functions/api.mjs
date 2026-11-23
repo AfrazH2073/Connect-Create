@@ -45,8 +45,11 @@ async function login(req) {
   if (!process.env.DISCORD_CLIENT_ID) fail(500, 'DISCORD_CLIENT_ID is not configured');
   const state = newId();
   const params = new URL(req.url).searchParams;
-  const addAccount = params.get('add') === '1';
-  const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state, addAccount ? 'consent' : 'none');
+  // Default: always show Discord's approval page in the browser, where you can see which
+  // account you're using and switch with "Not you?". ?app=1 skips straight through instead,
+  // which is the path that tends to hand off to the Discord desktop app.
+  const useApp = params.get('app') === '1' && params.get('add') !== '1';
+  const url = discord.authorizeUrl(`${siteOrigin(req)}/api/auth/callback`, state, useApp ? 'none' : 'consent');
   const sec = isSecure(req) ? '; Secure' : '';
   const cookies = [`cc_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${sec}`];
   // Optional page to land on afterwards, e.g. the lobby you were joining. Only in-site hash routes.

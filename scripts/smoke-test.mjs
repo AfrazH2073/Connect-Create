@@ -235,6 +235,9 @@ await test('"Add me to the server" login returns you to the lobby', async () => 
   const state = cookies.find((c) => c.startsWith('cc_oauth_state=')).split('=')[1];
   const cb = await api(new Request(`https://site.test/api/auth/callback?code=x&state=${state}`, { headers: { cookie: cookies.join('; ') } }));
   assert.equal(cb.headers.get('location'), '/#/lobbies/abc123?joined_server=1');
+  assert.equal(new URL(login.headers.get('location')).searchParams.get('prompt'), 'consent', 'browser approval page by default');
+  const viaApp = await api(new Request('https://site.test/api/auth/login?app=1'));
+  assert.equal(new URL(viaApp.headers.get('location')).searchParams.get('prompt'), 'none', 'app option skips the page');
   const evil = await api(new Request('https://site.test/api/auth/login?return=https%3A%2F%2Fevil.example'));
   assert.ok(!evil.headers.getSetCookie().some((c) => c.startsWith('cc_return=')), 'ignores off-site return targets');
 });

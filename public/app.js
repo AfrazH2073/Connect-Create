@@ -140,7 +140,8 @@ function showJoinServerPrompt(inviteUrl, retry) {
     <div class="modal-head"><h2 class="row" style="gap:10px">${ICON.discord} Join our Discord first</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
     <p class="muted" style="margin-top:0">Every lobby gets a private text and voice channel in the <strong>Create and Connect</strong> Discord server, so you need to be in the server before you can join or host a lobby.</p>
     <a class="btn discord lg" style="width:100%" href="${loginUrl}?return=${back}">${ICON.discord} Add me to the server</a>
-    <p class="hint" style="margin:8px 0 0;text-align:center">You'll approve it on Discord, then come straight back here.</p>
+    <p class="hint" style="margin:8px 0 0;text-align:center">Opens Discord in your browser — check it's the right account (use <strong>"Not you?"</strong> to switch), approve, and you'll come straight back here.</p>
+    <p style="margin:10px 0 0;text-align:center"><a class="hint" href="${loginUrl}?app=1&return=${back}">Open in the Discord app instead</a></p>
     ${inviteUrl ? `<p class="hint" style="text-align:center;margin:14px 0 0">Or use the <a href="${esc(inviteUrl)}" target="_blank" rel="noopener">server invite link</a>.</p>` : ''}
     <div class="menu-sep" style="margin:18px 0"></div>
     <div class="row" style="justify-content:space-between"><span class="hint">Already joined?</span><button class="btn sm" id="retry-join">I've joined — try again</button></div>`);
@@ -346,7 +347,8 @@ async function viewCreators(params) {
 }
 
 function requireLogin(msg = 'Log in with Discord to continue.') {
-  $app.innerHTML = `<div class="card" style="max-width:520px;margin:40px auto;text-align:center"><h2>Log in required</h2><p class="muted">${esc(msg)}</p>${loginBtn()}</div>`;
+  $app.innerHTML = `<div class="card" style="max-width:520px;margin:40px auto;text-align:center"><h2>Log in required</h2><p class="muted">${esc(msg)}</p>${loginBtn()}
+    <p style="margin:12px 0 0"><a class="hint" href="${loginUrl}?app=1">Open in the Discord app instead</a></p></div>`;
 }
 
 async function viewEditProfile(params) {

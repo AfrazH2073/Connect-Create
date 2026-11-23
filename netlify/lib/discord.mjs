@@ -77,7 +77,7 @@ export function explainDiscordError(e) {
 
 // prompt 'consent' always shows Discord's approval screen, which has a
 // "Not you?" link for signing in with a different Discord account.
-export function authorizeUrl(redirectUri, state, prompt = 'none') {
+export function authorizeUrl(redirectUri, state, prompt = 'consent') {
   const p = new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID,
     response_type: 'code',
