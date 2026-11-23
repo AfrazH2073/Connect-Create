@@ -1,8 +1,11 @@
-// Scheduled Function (free on Netlify): runs every hour and deletes the Discord
-// text + voice channels of lobbies that were marked completed 14+ days ago.
+// Scheduled Function (free on Netlify), runs every hour:
+//  - deletes a lobby's Discord channels + category 14 days after it was marked completed
+//  - for repeating lobbies: opens the next dates for sign-up, and deletes each date's
+//    channels 14 days after that date (or right away if the host skipped it)
 
 import { db } from '../lib/db.mjs';
-import { deleteLobbyChannels } from '../lib/discord.mjs';
+import { deleteLobbyChannels, deleteRoom, hasChannels } from '../lib/discord.mjs';
+import { syncSessionSchedule } from '../lib/model.mjs';
 
 const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000;
 
@@ -10,17 +13,28 @@ export async function runCleanup(nowMs = Date.now()) {
   const lobbies = await db.lobbies.all();
   let deleted = 0;
   for (const l of lobbies) {
-    if (l.status !== 'completed' || !l.completedAt || !l.discord?.textId || l.discord.deletedAt) continue;
-    if (nowMs - Date.parse(l.completedAt) < TWO_WEEKS) continue;
+    const before = JSON.stringify(l);
     try {
-      await deleteLobbyChannels(l);
-      await db.lobbies.put(l);
-      deleted++;
+      if (l.recurrence) {
+        for (const s of syncSessionSchedule(l, nowMs)) await deleteRoom(s.discord);
+        for (const s of l.sessions || []) {
+          if (!s.discord?.textId || s.discord.deletedAt) continue;
+          if (s.status === 'skipped' || nowMs - Date.parse(s.at) >= TWO_WEEKS) {
+            await deleteRoom(s.discord);
+            deleted++;
+          }
+        }
+      }
+      if (l.status === 'completed' && l.completedAt && hasChannels(l) && nowMs - Date.parse(l.completedAt) >= TWO_WEEKS) {
+        await deleteLobbyChannels(l);
+        deleted++;
+      }
     } catch (e) {
       console.error(`cleanup failed for lobby ${l.id}`, e.message);
     }
+    if (JSON.stringify(l) !== before) await db.lobbies.put(l);
   }
-  console.log(`cleanup: deleted channels for ${deleted} lobbies`);
+  console.log(`cleanup: deleted channels for ${deleted} lobbies/dates`);
   return deleted;
 }
 

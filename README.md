@@ -1,13 +1,13 @@
 # Create & Connect
 
-A site where YouTube and Twitch creators meet, post **lobbies** for streams and videos ("Mario Party Friday!"), show off collabs they've done, and automatically get a **private Discord text + voice channel** in the *Create and Connect* server once a lobby has 2+ people.
+A site where creators from YouTube, Twitch, TikTok, Instagram, X / Twitter and Substack meet, post **lobbies** for streams and videos ("Mario Party Friday!"), show off collabs they've done, and automatically get a **private Discord text + voice channel** in the *Create and Connect* server once a lobby has 2+ people.
 
 Everything runs on free tiers: **Netlify** (hosting, serverless functions, scheduled functions, Netlify Blobs database) and **Discord** (OAuth login + a bot that only uses the REST API).
 
 ## Features
 
 - **Discord-verified accounts.** You sign up with "Log in with Discord". The site reads your exact Discord username from Discord itself, so nobody can claim a tag that isn't theirs. Logging in also adds you to the Create and Connect server (`guilds.join` scope).
-- **Creator profiles.** Platforms (YouTube, Twitch), content categories (Gaming, IRL, STEM, Beauty, …), bio, and what you're looking for.
+- **Creator profiles.** Your own display name, profile picture (upload one or keep your Discord picture), pronouns, banner colour, platforms (YouTube, Twitch, TikTok, Instagram, X / Twitter, Substack), content categories (Gaming, IRL, STEM, Beauty, …), bio, and what you're looking for. Your verified Discord username always shows too.
 - **Collab showcase.** Add YouTube or Twitch videos, VODs, and clips. You have to confirm that you own the content or have the owner's explicit permission. Anyone you tag is asked to confirm, and once they do it shows on their profile too. Videos play inline.
 - **Lobbies** with five visibility modes:
   | Mode | Who can see it | How you join |
@@ -18,8 +18,9 @@ Everything runs on free tiers: **Netlify** (hosting, serverless functions, sched
   | Private | Only invited creators | By invite |
   | Friends | Only the host's friends | Friends join directly |
 - Co-hosts, invites, kick, slot limits, scheduled time, and mark completed or reopen.
-- **Discord automation.** At 2+ members the bot creates a hidden text channel and a voice channel that only lobby members can see. Access updates when people join, leave, or get removed.
-- **Cleanup.** A scheduled function runs every hour and deletes a lobby's channels **14 days after the lobby is marked completed**. If a lobby is cancelled, its channels are deleted right away.
+- **Repeating lobbies.** Pick a first date and a repeat (every day, every 1–4 weeks, or every month, optionally until a date). The next 6 dates are always open, and people sign up for just the dates they can make. Slots are per date. Hosts can skip a single date (or restore it). Times stay the same local time across daylight-saving changes.
+- **Discord automation.** Every lobby gets its **own category** in the server. At 2+ members the bot creates a hidden text channel and a voice channel in it that only lobby members can see. For repeating lobbies, each date gets its own pair once 2+ people sign up for that date, and the names start with the date, e.g. `2026-12-07-smash-bros`. Access updates when people join, leave, sign up, withdraw, or get removed.
+- **Cleanup.** A scheduled function runs every hour. It deletes a lobby's channels and category **14 days after the lobby is marked completed**, and each repeating date's channels 14 days after that date (right away if the host skipped it). If a lobby is cancelled, everything is deleted right away.
 - Inbox for join requests, invites, friend requests, and collab tags. There is also a friends list.
 
 ## Project layout
@@ -50,7 +51,8 @@ netlify.toml            build and redirect config (Netlify reads it automaticall
 4. Invite the bot to your server: **OAuth2 → URL Generator**, select scope **bot** and permission **Administrator**. Open the generated URL and pick the *Create and Connect* server.
    - If you'd rather not use Administrator, the minimum is: Manage Channels, Manage Roles, Create Instant Invite, View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Add Reactions, Connect, Speak, Video, Use Voice Activity.
 5. Server ID: in Discord go to **User Settings → Advanced** and turn on **Developer Mode**. Then right-click the server icon and choose **Copy Server ID**. This is `DISCORD_GUILD_ID`.
-6. Optional: create a category such as "Lobbies", right-click it, and choose **Copy Channel ID**. This is `DISCORD_CATEGORY_ID`, and lobby channels will be created inside that category.
+
+The bot creates a new category for every lobby, so you don't need to make one. (`DISCORD_CATEGORY_ID` from older versions is no longer used and can be deleted.)
 
 ### 2. Netlify
 
@@ -72,7 +74,6 @@ Push this repo to GitHub, then in Netlify choose **Add new site → Import from 
 | `DISCORD_BOT_TOKEN` | from step 1.3 (mark as secret) |
 | `DISCORD_GUILD_ID` | from step 1.5 |
 | `SESSION_SECRET` | any long random string. Generate one with `openssl rand -hex 32` |
-| `DISCORD_CATEGORY_ID` | *(optional)* from step 1.6 |
 | `SITE_URL` | *(optional)* e.g. `https://create-and-connect.netlify.app`. Pins the OAuth redirect to one domain |
 
 You don't need to set up a database: Netlify Blobs is enabled automatically.
@@ -92,4 +93,6 @@ To run against the real Discord app, use `npx netlify-cli dev` with the env vars
 ## Notes and limits
 
 - Netlify Blobs is a key/value store, and list pages load every record. That's fine for hundreds to low thousands of users and lobbies. Past that, move to a free Postgres such as Supabase or Neon.
+- A Discord server can have at most 500 channels, categories included. Each lobby uses 1 category plus 2 channels (2 per date for repeating lobbies), and cleanup frees them 14 days after the lobby or date is over.
+- Profile pictures are shrunk to 256×256 in the browser and stored in Netlify Blobs.
 - If a lobby member has left the Discord server, the bot can't give them channel access. The lobby page shows who is missing; logging out and back in re-adds them to the server.

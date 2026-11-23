@@ -1,7 +1,9 @@
 // Shared constants, validation and visibility rules.
 import crypto from 'node:crypto';
 
-export const PLATFORMS = ['youtube', 'twitch'];
+export const PLATFORMS = ['youtube', 'twitch', 'tiktok', 'instagram', 'twitter', 'substack'];
+// Profile banner colours (the frontend maps each key to a gradient).
+export const BANNERS = ['violet', 'blue', 'teal', 'green', 'orange', 'pink', 'red', 'slate'];
 export const CATEGORIES = [
   'Gaming', 'IRL', 'Just Chatting', 'STEM', 'Tech', 'Education', 'Beauty', 'Fashion',
   'Music', 'Art', 'Comedy', 'Fitness', 'Cooking', 'Travel', 'ASMR', 'Podcasts',
@@ -34,31 +36,44 @@ export function idList(list, max = 100) {
   return [...new Set(list.filter((x) => typeof x === 'string' && /^\d{5,25}$/.test(x)))].slice(0, max);
 }
 
-/** Accept "@handle", "handle", or a full channel URL and return a clean handle. */
+/** Accept "@handle", "handle", or a full profile URL and return a clean handle. */
 export function cleanHandle(platform, input) {
   let s = str(input, 200);
   if (!s) return '';
   try {
-    if (/^https?:\/\//i.test(s)) {
-      const u = new URL(s);
+    if (/^https?:\/\//i.test(s) || /^(www\.)?[\w-]+(\.[\w-]+)+\//i.test(s) || /^([\w-]+\.)?substack\.com$/i.test(s)) {
+      const u = new URL(/^https?:/i.test(s) ? s : `https://${s}`);
+      const host = u.hostname.toLowerCase().replace(/^www\./, '');
       const parts = u.pathname.split('/').filter(Boolean);
       if (platform === 'youtube') {
         const at = parts.find((p) => p.startsWith('@'));
         s = at || (parts[0] === 'channel' || parts[0] === 'c' || parts[0] === 'user' ? parts.slice(0, 2).join('/') : parts[0] || '');
+      } else if (platform === 'substack') {
+        // name.substack.com, substack.com/@name, or a custom newsletter domain
+        if (host.endsWith('.substack.com')) s = host.slice(0, -'.substack.com'.length);
+        else if (host === 'substack.com') s = (parts[0] || '').replace(/^@/, '');
+        else s = host;
       } else {
         s = parts[0] || '';
       }
     }
   } catch { /* fall through */ }
   s = s.replace(/^@/, '');
+  if (platform !== 'youtube') s = s.replace(/\//g, '');
   return s.replace(/[^\w.\-/]/g, '').slice(0, 100);
 }
 
 export function platformUrl(platform, handle) {
   if (!handle) return '';
-  if (platform === 'youtube') return handle.includes('/') ? `https://www.youtube.com/${handle}` : `https://www.youtube.com/@${handle}`;
-  if (platform === 'twitch') return `https://www.twitch.tv/${handle}`;
-  return '';
+  switch (platform) {
+    case 'youtube': return handle.includes('/') ? `https://www.youtube.com/${handle}` : `https://www.youtube.com/@${handle}`;
+    case 'twitch': return `https://www.twitch.tv/${handle}`;
+    case 'tiktok': return `https://www.tiktok.com/@${handle}`;
+    case 'instagram': return `https://www.instagram.com/${handle}`;
+    case 'twitter': return `https://x.com/${handle}`;
+    case 'substack': return handle.includes('.') ? `https://${handle}` : `https://${handle}.substack.com`;
+    default: return '';
+  }
 }
 
 /** Parse a YouTube/Twitch link into something we can embed. */
@@ -92,13 +107,19 @@ export function parseMedia(url) {
 
 // ---------- Users ----------
 
+/** The picture people chose on Create & Connect, or their Discord one. */
+export const avatarOf = (u) => u.customAvatar || u.avatar;
+
 export function publicUser(u) {
   if (!u) return null;
   return {
     id: u.id,
     discordUsername: u.discordUsername,
     displayName: u.displayName || u.discordGlobalName || u.discordUsername,
-    avatar: u.avatar,
+    avatar: avatarOf(u),
+    discordAvatar: u.avatar,
+    pronouns: u.pronouns || '',
+    banner: u.banner || 'violet',
     bio: u.bio || '',
     lookingFor: u.lookingFor || '',
     platforms: u.platforms || {},
@@ -111,7 +132,7 @@ export function publicUser(u) {
 
 export function miniUser(u) {
   if (!u) return null;
-  return { id: u.id, displayName: u.displayName || u.discordUsername, discordUsername: u.discordUsername, avatar: u.avatar };
+  return { id: u.id, displayName: u.displayName || u.discordUsername, discordUsername: u.discordUsername, avatar: avatarOf(u) };
 }
 
 // ---------- Lobby rules ----------
@@ -136,3 +157,114 @@ export function canView(lobby, uid, host) {
       return false;
   }
 }
+
+// ---------- Repeating lobbies ----------
+// A repeating lobby stores its first date (scheduledAt), a rule like
+// { unit: 'week', every: 2 }, the host's time zone, and an optional last date.
+// Each date ("session") gets its own sign-up list and its own Discord channels.
+
+export const REPEATS = {
+  daily: { unit: 'day', every: 1 },
+  weekly: { unit: 'week', every: 1 },
+  biweekly: { unit: 'week', every: 2 },
+  '3weeks': { unit: 'week', every: 3 },
+  '4weeks': { unit: 'week', every: 4 },
+  monthly: { unit: 'month', every: 1 },
+};
+export const repeatKey = (r) => r ? Object.keys(REPEATS).find((k) => REPEATS[k].unit === r.unit && REPEATS[k].every === r.every) || null : null;
+
+const UPCOMING = 6; // how many future dates are open for sign-up at once
+const SESSION_LENGTH_MS = 12 * 3600e3; // a date counts as over 12h after it starts
+export const isPast = (s, nowMs = Date.now()) => Date.parse(s.at) + SESSION_LENGTH_MS < nowMs;
+
+export function validTimeZone(tz) {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return typeof tz === 'string' && tz ? tz : 'UTC'; } catch { return 'UTC'; }
+}
+
+function zoneParts(ms, tz) {
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { y: +p.year, mo: +p.month, d: +p.day, h: +p.hour % 24, mi: +p.minute };
+}
+
+/** Wall-clock time in a time zone -> UTC ms (handles daylight saving). */
+function zonedToUtc(y, mo, d, h, mi, tz) {
+  const want = Date.UTC(y, mo - 1, d, h, mi);
+  let guess = want;
+  for (let i = 0; i < 3; i++) {
+    const p = zoneParts(guess, tz);
+    const diff = want - Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
+    if (!diff) break;
+    guess += diff;
+  }
+  return guess;
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+
+/** The n-th date of the series, in the host's time zone (same local time every time). */
+function occurrence(start, rule, tz, n) {
+  let y = start.y, mo = start.mo, d = start.d;
+  if (rule.unit === 'month') {
+    const total = (mo - 1) + n * rule.every;
+    y = start.y + Math.floor(total / 12);
+    mo = (total % 12) + 1;
+    d = Math.min(start.d, new Date(Date.UTC(y, mo, 0)).getUTCDate()); // e.g. the 31st -> 30th
+  } else {
+    const t = new Date(Date.UTC(y, mo - 1, d + n * rule.every * (rule.unit === 'week' ? 7 : 1)));
+    y = t.getUTCFullYear(); mo = t.getUTCMonth() + 1; d = t.getUTCDate();
+  }
+  return { key: `${y}-${pad(mo)}-${pad(d)}`, at: new Date(zonedToUtc(y, mo, d, start.h, start.mi, tz)).toISOString() };
+}
+
+/** The next few dates that haven't happened yet. */
+export function upcomingDates(l, nowMs = Date.now(), count = UPCOMING) {
+  const r = l.recurrence;
+  if (!r || !l.scheduledAt) return [];
+  const start = zoneParts(Date.parse(l.scheduledAt), r.timeZone);
+  const out = [];
+  for (let n = 0; n < 5000 && out.length < count; n++) {
+    const o = occurrence(start, r, r.timeZone, n);
+    if (r.until && o.key > r.until) break;
+    if (!isPast(o, nowMs)) out.push(o);
+  }
+  return out;
+}
+
+/** "YYYY-MM-DD" of a moment in the series' time zone. */
+export const dateKey = (iso, tz) => { const p = zoneParts(Date.parse(iso), tz); return `${p.y}-${pad(p.mo)}-${pad(p.d)}`; };
+
+/**
+ * Bring l.sessions in line with the schedule: add the next dates, move times if the
+ * host changed them, and drop future dates that are no longer on the schedule.
+ * Returns the dropped sessions so their Discord channels can be deleted.
+ */
+export function syncSessionSchedule(l, nowMs = Date.now()) {
+  if (!l.recurrence || l.status !== 'open') return [];
+  const wanted = upcomingDates(l, nowMs);
+  const byKey = new Map(wanted.map((o) => [o.key, o]));
+  const removed = [];
+  const kept = [];
+  for (const s of l.sessions || []) {
+    if (isPast(s, nowMs)) {
+      // keep recent past dates (their channels live 14 more days); forget old ones
+      const old = Date.parse(s.at) < nowMs - 30 * 864e5;
+      if (!old || (s.discord?.textId && !s.discord.deletedAt)) kept.push(s);
+      continue;
+    }
+    const o = byKey.get(s.key);
+    if (!o) { removed.push(s); continue; }
+    s.at = o.at;
+    byKey.delete(s.key);
+    kept.push(s);
+  }
+  for (const o of byKey.values()) kept.push({ key: o.key, at: o.at, memberIds: [l.hostId], discord: {} });
+  kept.sort((a, b) => a.at.localeCompare(b.at));
+  l.sessions = kept;
+  return removed;
+}
+
+export const nextSession = (l, nowMs = Date.now()) =>
+  (l.sessions || []).find((s) => !isPast(s, nowMs) && s.status !== 'skipped') || null;

@@ -5,8 +5,9 @@ import { db } from '../lib/db.mjs';
 import { createSessionCookie, clearSessionCookie, readSession, parseCookies, readAccounts, accountsCookie } from '../lib/session.mjs';
 import * as discord from '../lib/discord.mjs';
 import {
-  PLATFORMS, CATEGORIES, VISIBILITIES, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
+  PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
+  repeatKey, validTimeZone, dateKey, syncSessionSchedule, nextSession, isPast,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -155,14 +156,14 @@ async function getMe(ctx) {
   const u = await db.users.get(ctx.uid);
   if (!u) return json({ user: null, config: clientConfig() });
   return json({
-    user: { ...publicUser(u), onboarded: !!u.onboarded, inServer: u.inServer, friendIds: u.friendIds, friendRequestsIn: u.friendRequestsIn, friendRequestsOut: u.friendRequestsOut },
+    user: { ...publicUser(u), hasCustomAvatar: !!u.customAvatar, onboarded: !!u.onboarded, inServer: u.inServer, friendIds: u.friendIds, friendRequestsIn: u.friendRequestsIn, friendRequestsOut: u.friendRequestsOut },
     config: clientConfig(),
   });
 }
 
 function clientConfig() {
   return {
-    categories: CATEGORIES, platforms: PLATFORMS, visibilities: VISIBILITIES,
+    categories: CATEGORIES, platforms: PLATFORMS, visibilities: VISIBILITIES, banners: BANNERS, repeats: Object.keys(REPEATS),
     discordGuildId: process.env.DISCORD_GUILD_ID || null,
     discordInvite: process.env.DISCORD_INVITE_URL || null,
   };
@@ -173,17 +174,62 @@ async function updateMe(ctx, b) {
   u.displayName = str(b.displayName, 40) || u.discordUsername;
   u.bio = str(b.bio, 600);
   u.lookingFor = str(b.lookingFor, 300);
+  u.pronouns = str(b.pronouns, 30);
+  u.banner = BANNERS.includes(b.banner) ? b.banner : u.banner || 'violet';
   u.categories = pick(b.categories, CATEGORIES, 10);
   u.platforms = {};
   for (const p of PLATFORMS) {
     const handle = cleanHandle(p, b.platforms?.[p]);
     if (handle) u.platforms[p] = { handle, url: platformUrl(p, handle) };
   }
-  if (!Object.keys(u.platforms).length) fail(400, 'Add at least one platform you create on (YouTube or Twitch)');
+  if (!Object.keys(u.platforms).length) fail(400, 'Add at least one platform you create on (YouTube, Twitch, TikTok, Instagram, X / Twitter or Substack)');
   if (!u.categories.length) fail(400, 'Pick at least one content category');
   u.onboarded = true;
   await db.users.put(u);
   return getMe(ctx);
+}
+
+// ---------- profile pictures ----------
+// The browser shrinks the picture to 256x256 before uploading, so these stay small.
+
+const MAX_AVATAR_BYTES = 300_000;
+
+async function uploadAvatar(ctx, b) {
+  const u = await requireUser(ctx);
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(b.image || ''));
+  if (!m) fail(400, 'Upload a PNG, JPG or WebP image');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length > MAX_AVATAR_BYTES) fail(400, 'That picture is too big. Pick one under 300 KB.');
+  const looksRight = m[1] === 'png' ? bytes[0] === 0x89 && bytes[1] === 0x50
+    : m[1] === 'jpeg' ? bytes[0] === 0xff && bytes[1] === 0xd8
+    : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
+  if (!looksRight) fail(400, "That file isn't a valid image");
+  const v = newId().slice(0, 8);
+  await db.avatars.put(u.id, { type: `image/${m[1]}`, data: m[2], v });
+  u.customAvatar = `/api/avatars/${u.id}?v=${v}`;
+  await db.users.put(u);
+  return getMe(ctx);
+}
+
+async function removeAvatar(ctx) {
+  const u = await requireUser(ctx);
+  u.customAvatar = null;
+  await db.avatars.del(u.id);
+  await db.users.put(u);
+  return getMe(ctx);
+}
+
+async function serveAvatar(id) {
+  const a = /^\d{5,25}$/.test(id) ? await db.avatars.get(id) : null;
+  if (!a) return new Response('Not found', { status: 404 });
+  return new Response(Buffer.from(a.data, 'base64'), {
+    headers: {
+      'Content-Type': a.type,
+      // The URL changes (?v=) on every new upload, so browsers can cache it forever.
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Security-Policy': "default-src 'none'",
+    },
+  });
 }
 
 async function listUsers(ctx, url) {
@@ -318,12 +364,41 @@ async function clipAction(ctx, id, action) {
 
 // ---------- lobbies ----------
 
+function recurrenceView(l) {
+  if (!l.recurrence) return null;
+  return { repeat: repeatKey(l.recurrence), until: l.recurrence.until || null, timeZone: l.recurrence.timeZone };
+}
+
 function lobbySummary(l, people) {
+  const next = l.recurrence ? nextSession(l) : null;
   return {
     id: l.id, title: l.title, game: l.game, description: l.description.slice(0, 220), categories: l.categories,
     platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility,
     status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
+    recurrence: recurrenceView(l),
+    next: next ? { key: next.key, at: next.at, count: next.memberIds.length } : null,
   };
+}
+
+const guildChannelUrl = (id) => `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${id}`;
+
+/** The dates of a repeating lobby, with who signed up for each. */
+function sessionsView(l, uid, people, manager, member) {
+  const nowMs = Date.now();
+  return (l.sessions || [])
+    // upcoming dates, plus past ones whose channels are still around (for people in them)
+    .filter((s) => !isPast(s, nowMs) || ((member || manager) && s.discord?.textId && !s.discord.deletedAt))
+    .map((s) => {
+      const signedUp = !!uid && s.memberIds.includes(uid);
+      const room = s.discord || {};
+      const links = (signedUp || manager) && room.textId && !room.deletedAt;
+      return {
+        key: s.key, at: s.at, past: isPast(s, nowMs), skipped: s.status === 'skipped',
+        count: s.memberIds.length, signedUp,
+        members: s.memberIds.map((id) => miniUser(people[id])).filter(Boolean),
+        discord: links ? { textUrl: guildChannelUrl(room.textId), voiceUrl: room.voiceId ? guildChannelUrl(room.voiceId) : null } : null,
+      };
+    });
 }
 
 function lobbyDetail(l, uid, people) {
@@ -341,6 +416,7 @@ function lobbyDetail(l, uid, people) {
       requested: !!uid && l.requestIds.includes(uid), invited: !!uid && l.invitedIds.includes(uid),
     },
     requestCount: l.requestIds.length,
+    sessions: l.recurrence ? sessionsView(l, uid, people, manager, member) : null,
   };
   if (manager) {
     out.code = l.visibility === 'code' ? l.code : null;
@@ -351,8 +427,8 @@ function lobbyDetail(l, uid, people) {
     const d = l.discord || {};
     out.discord = {
       configured: discord.discordConfigured(),
-      textUrl: d.textId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.textId}` : null,
-      voiceUrl: d.voiceId && !d.deletedAt ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${d.voiceId}` : null,
+      textUrl: d.textId && !d.deletedAt ? guildChannelUrl(d.textId) : null,
+      voiceUrl: d.voiceId && !d.deletedAt ? guildChannelUrl(d.voiceId) : null,
       deletedAt: d.deletedAt || null,
       // Hosts get the exact fix; members just learn something is wrong.
       error: d.error ? (manager ? d.error : 'The Discord channels could not be set up yet. The host has been shown how to fix it.') : null,
@@ -370,6 +446,20 @@ function readLobbyFields(b, existing) {
     const d = new Date(b.scheduledAt);
     if (!isNaN(d)) scheduledAt = d.toISOString();
   }
+  // Repeating: b.repeat is a key of REPEATS ('weekly', 'biweekly', ...) or 'none'.
+  let recurrence = existing?.recurrence || null;
+  if (b.repeat !== undefined) {
+    const rule = REPEATS[b.repeat];
+    recurrence = rule ? {
+      ...rule,
+      timeZone: validTimeZone(b.timeZone || existing?.recurrence?.timeZone),
+      until: /^\d{4}-\d{2}-\d{2}$/.test(b.repeatUntil || '') ? b.repeatUntil : null,
+    } : null;
+  }
+  if (recurrence) {
+    if (!scheduledAt) fail(400, 'Pick the date and time of the first session for a repeating lobby');
+    if (recurrence.until && recurrence.until < dateKey(scheduledAt, recurrence.timeZone)) fail(400, '"Repeat until" is before the first session');
+  }
   return {
     title: str(b.title, 80, { required: true, name: 'Title' }),
     game: str(b.game, 80),
@@ -379,6 +469,7 @@ function readLobbyFields(b, existing) {
     scheduledAt,
     maxSlots,
     visibility,
+    recurrence,
   };
 }
 
@@ -402,7 +493,15 @@ async function loadLobby(ctx, id) {
   return { l, host };
 }
 
+/** Add the next dates of a repeating lobby; delete channels of dates that were dropped. */
+async function refreshSchedule(l) {
+  for (const s of syncSessionSchedule(l)) {
+    await discord.deleteRoom(s.discord).catch((e) => console.error('could not delete dropped date channels', e.message));
+  }
+}
+
 async function saveAndRespond(ctx, req, l, { sync = true } = {}) {
+  await refreshSchedule(l);
   if (sync) await discord.syncLobbyChannels(l, siteOrigin(req));
   l.updatedAt = now();
   await db.lobbies.put(l);
@@ -410,7 +509,10 @@ async function saveAndRespond(ctx, req, l, { sync = true } = {}) {
 }
 
 async function renderLobby(ctx, l) {
-  const people = await usersById([l.hostId, ...l.coHostIds, ...l.memberIds, ...l.requestIds, ...l.invitedIds, ...(l.discord?.failedIds || [])]);
+  const people = await usersById([
+    l.hostId, ...l.coHostIds, ...l.memberIds, ...l.requestIds, ...l.invitedIds, ...(l.discord?.failedIds || []),
+    ...(l.sessions || []).flatMap((s) => s.memberIds),
+  ]);
   return json({ lobby: lobbyDetail(l, ctx.uid, people) });
 }
 
@@ -431,7 +533,9 @@ async function listLobbies(ctx, url) {
   // ?visibility=public,code -> any of those types (empty = all)
   const vis = (url.searchParams.get('visibility') || '').split(',').filter((v) => VISIBILITIES.includes(v));
   if (vis.length) lobbies = lobbies.filter((l) => vis.includes(l.visibility));
-  lobbies.sort((a, b) => (a.scheduledAt || a.createdAt).localeCompare(b.scheduledAt || b.createdAt));
+  for (const l of lobbies) syncSessionSchedule(l); // in memory only: so "next date" is current
+  const when = (l) => (l.recurrence && nextSession(l)?.at) || l.scheduledAt || l.createdAt;
+  lobbies.sort((a, b) => when(a).localeCompare(when(b)));
   return json({ lobbies: lobbies.slice(0, 200).map((l) => lobbySummary(l, hosts)) });
 }
 
@@ -483,7 +587,7 @@ async function createLobby(ctx, req, b) {
   const fields = readLobbyFields(b);
   const l = {
     id: newId(), ...fields, hostId: me.id, coHostIds: [], memberIds: [me.id], requestIds: [],
-    invitedIds: [], code: '', status: 'open', createdAt: now(), updatedAt: now(), discord: {},
+    invitedIds: [], code: '', status: 'open', createdAt: now(), updatedAt: now(), discord: {}, sessions: [],
   };
   l.code = await uniqueCode(l.id);
   l.coHostIds = idList(b.coHostIds, 5).filter((id) => id !== me.id);
@@ -493,21 +597,41 @@ async function createLobby(ctx, req, b) {
 
 async function lobbyAction(ctx, req, id, action, arg, b) {
   const { l, host } = await loadLobby(ctx, id);
-  if (action === '' && req.method === 'GET') return renderLobby(ctx, l);
+  if (action === '' && req.method === 'GET') {
+    if (l.recurrence && l.status === 'open') {
+      const before = JSON.stringify(l.sessions);
+      await refreshSchedule(l);
+      if (JSON.stringify(l.sessions) !== before) await db.lobbies.put(l);
+    }
+    return renderLobby(ctx, l);
+  }
 
   const me = await requireUser(ctx);
   const manager = isManager(l, me.id);
   const isHost = l.hostId === me.id;
   const needManager = () => { if (!manager) fail(403, 'Only the host or co-hosts can do that'); };
   const needOpen = () => { if (l.status !== 'open') fail(400, 'This lobby is no longer open'); };
-  const hasRoom = () => l.memberIds.length < l.maxSlots;
+  // Repeating lobbies cap each date instead of the lobby itself.
+  const hasRoom = () => !!l.recurrence || l.memberIds.length < l.maxSlots;
+  const session = () => {
+    if (!l.recurrence) fail(400, "This lobby doesn't repeat");
+    const s = (l.sessions || []).find((x) => x.key === arg);
+    if (!s) fail(404, 'That date is not on the schedule');
+    return s;
+  };
+  const dropFromSessions = (uid) => { for (const s of l.sessions || []) s.memberIds = s.memberIds.filter((x) => x !== uid); };
   const removeFrom = (key, uid) => { l[key] = l[key].filter((x) => x !== uid); };
 
   switch (`${req.method} ${action}`) {
     case 'PUT ': {
       needManager();
       const fields = readLobbyFields(b, l);
-      if (fields.maxSlots < l.memberIds.length) fail(400, `There are already ${l.memberIds.length} people in this lobby`);
+      if (l.recurrence && !fields.recurrence) fail(400, "A repeating lobby can't be turned into a one-time lobby. Mark it completed and create a new one instead.");
+      if (!l.recurrence && fields.recurrence && l.discord?.textId) fail(400, "This lobby already has Discord channels, so it can't be made repeating. Create a new repeating lobby instead.");
+      const busiest = l.recurrence
+        ? Math.max(0, ...(l.sessions || []).filter((s) => !isPast(s)).map((s) => s.memberIds.length))
+        : l.memberIds.length;
+      if (fields.maxSlots < busiest) fail(400, `There are already ${busiest} people ${l.recurrence ? 'signed up for one of the dates' : 'in this lobby'}`);
       if (fields.visibility === 'code' && l.visibility !== 'code') l.code = await uniqueCode(l.id);
       Object.assign(l, fields);
       if (isHost && Array.isArray(b.coHostIds)) l.coHostIds = idList(b.coHostIds, 5).filter((x) => x !== l.hostId);
@@ -536,6 +660,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('memberIds', me.id);
       removeFrom('requestIds', me.id);
       removeFrom('coHostIds', me.id);
+      dropFromSessions(me.id);
       break;
     }
     case 'POST approve': {
@@ -558,6 +683,50 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('memberIds', arg);
       removeFrom('coHostIds', arg);
       removeFrom('invitedIds', arg);
+      dropFromSessions(arg);
+      break;
+    }
+    case 'POST signup': {
+      // Sign up for one date of a repeating lobby.
+      needOpen();
+      const s = session();
+      if (isPast(s) || s.status === 'skipped') fail(400, 'That date is not open for sign-up');
+      if (s.memberIds.includes(me.id)) fail(400, "You're already signed up for that date");
+      if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
+      if (!isMember(l, me.id)) {
+        // Open lobbies let you sign up straight away; the others need the usual step first.
+        const canJoin = manager || l.invitedIds.includes(me.id) || l.visibility === 'public' || l.visibility === 'friends';
+        if (!canJoin) {
+          fail(403, l.visibility === 'approval' ? 'Request to join first. Once a host approves you, you can pick dates.'
+            : l.visibility === 'code' ? 'Enter the lobby code first, then pick your dates.'
+            : 'You need an invite to join this lobby');
+        }
+      }
+      await requireInServer(me);
+      if (s.memberIds.length >= l.maxSlots) fail(400, 'That date is full');
+      if (!isMember(l, me.id)) { l.memberIds.push(me.id); removeFrom('invitedIds', me.id); removeFrom('requestIds', me.id); }
+      s.memberIds.push(me.id);
+      break;
+    }
+    case 'POST withdraw': {
+      const s = session();
+      s.memberIds = s.memberIds.filter((x) => x !== me.id);
+      break;
+    }
+    case 'POST skip': {
+      // Host cancels one date (e.g. a holiday); its channels go away now.
+      needManager();
+      const s = session();
+      s.status = 'skipped';
+      await discord.deleteRoom(s.discord);
+      break;
+    }
+    case 'POST unskip': {
+      needManager();
+      const s = session();
+      if (isPast(s)) fail(400, 'That date has already passed');
+      delete s.status;
+      if (s.discord?.deletedAt) s.discord = {}; // fresh channels if people sign up again
       break;
     }
     case 'POST invite': {
@@ -657,6 +826,9 @@ export default async (req) => {
 
     if (path === '/me' && m === 'GET') return await getMe(ctx);
     if (path === '/me' && m === 'PUT') return await updateMe(ctx, b);
+    if (path === '/me/avatar' && m === 'PUT') return await uploadAvatar(ctx, b);
+    if (path === '/me/avatar' && m === 'DELETE') return await removeAvatar(ctx);
+    if (seg[0] === 'avatars' && seg[1] && m === 'GET') return await serveAvatar(seg[1]);
     if (path === '/inbox' && m === 'GET') return await inbox(ctx);
 
     if (path === '/users' && m === 'GET') return await listUsers(ctx, url);

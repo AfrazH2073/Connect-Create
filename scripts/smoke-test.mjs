@@ -90,9 +90,12 @@ await test('public lobby: join creates Discord text+voice at 2 members', async (
   assert.equal(channels.size, 0, 'no channels with only the host');
   const r = await alice.call('POST', `/lobbies/${lobby.id}/join`);
   assert.equal(r.lobby.me.isMember, true);
-  assert.equal(channels.size, 2);
-  const [text, voice] = [...channels.values()];
-  assert.equal(text.type, 0); assert.equal(voice.type, 2);
+  assert.equal(channels.size, 3, 'category + text + voice');
+  const [cat, text, voice] = [...channels.values()];
+  assert.equal(cat.type, 4); assert.equal(text.type, 0); assert.equal(voice.type, 2);
+  assert.equal(cat.name, 'Mario Party', 'category is named after the lobby');
+  const catId = [...channels.keys()][0];
+  assert.equal(text.parent_id, catId); assert.equal(voice.parent_id, catId);
   assert.ok(text.overwrites.has(host.id) && text.overwrites.has(alice.id));
   assert.ok(r.lobby.discord.textUrl.includes('/channels/900000000000000001/'));
   // anonymous viewer sees the lobby but not the Discord links
@@ -183,6 +186,7 @@ await test('completed lobby: channels deleted only after 14 days', async () => {
   assert.ok(channels.has(textId), 'still there after 13 days');
   await runCleanup(Date.now() + 15 * 864e5);
   assert.ok(!channels.has(textId), 'deleted after 14 days');
+  assert.ok(![...channels.values()].some((c) => c.type === 4 && c.name === 'Wrap up'), 'its category is deleted too');
   const after = await host.call('GET', `/lobbies/${lobby.id}`);
   assert.ok(after.lobby.discord.deletedAt);
 });
@@ -201,14 +205,14 @@ await test('Discord failure shows host a fix, keeps half-made channel, retry fin
   globalThis.failVoice = true;
   const before = channels.size;
   const j = await alice.call('POST', `/lobbies/${lobby.id}/join`);
-  assert.equal(channels.size, before + 1, 'text channel created, voice failed');
+  assert.equal(channels.size, before + 2, 'category + text channel created, voice failed');
   assert.match(j.lobby.discord.error, /host/, 'member sees a generic message');
   const h = await host.call('GET', `/lobbies/${lobby.id}`);
   assert.match(h.lobby.discord.error, /Administrator/, 'host sees the actual fix');
   globalThis.failVoice = false;
   const r = await host.call('POST', `/lobbies/${lobby.id}/sync-discord`);
   assert.equal(r.lobby.discord.error, null);
-  assert.equal(channels.size, before + 2, 'retry adds only the voice channel (no duplicate text)');
+  assert.equal(channels.size, before + 3, 'retry adds only the voice channel (no duplicate text or category)');
   const voiceId = r.lobby.discord.voiceUrl.split('/').pop();
   assert.ok(channels.get(voiceId).overwrites.has(alice.id), 'members get access to the new voice channel');
   assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/sync-discord`)).status, 403, 'only hosts can retry');
@@ -292,6 +296,122 @@ await test('switch accounts: only accounts signed in on this browser', async () 
   assert.equal(out.switchedTo, bob.id, 'logging out alice falls back to bob');
   const all = await req('POST', '/auth/logout', { all: true });
   assert.ok(all.headers.getSetCookie().every((c) => c.includes('Max-Age=0')), 'log out of all clears both cookies');
+});
+
+await test('profile: new platforms, pronouns, banner, and an uploaded picture', async () => {
+  const r = await bob.call('PUT', '/me', {
+    displayName: 'Bobby', pronouns: 'he/him', banner: 'teal', categories: ['Gaming'],
+    platforms: { tiktok: 'https://www.tiktok.com/@bobtok', instagram: '@bob.gram', twitter: 'x.com/bobx', substack: 'https://bob.substack.com/p/hi' },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.user.pronouns, 'he/him');
+  assert.equal(r.user.banner, 'teal');
+  assert.equal(r.user.platforms.tiktok.url, 'https://www.tiktok.com/@bobtok');
+  assert.equal(r.user.platforms.instagram.url, 'https://www.instagram.com/bob.gram');
+  assert.equal(r.user.platforms.twitter.url, 'https://x.com/bobx');
+  assert.equal(r.user.platforms.substack.url, 'https://bob.substack.com');
+  assert.equal((await bob.call('GET', '/users?platform=substack')).users[0].id, bob.id, 'filter creators by a new platform');
+
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal((await bob.call('PUT', '/me/avatar', { image: 'data:image/png;base64,' + btoa('not a png') })).status, 400, 'rejects non-images');
+  const up = await bob.call('PUT', '/me/avatar', { image: `data:image/png;base64,${png}` });
+  assert.match(up.user.avatar, /^\/api\/avatars\/\d+\?v=/);
+  assert.equal(up.user.hasCustomAvatar, true);
+  const img = await api(new Request(`https://site.test${up.user.avatar}`));
+  assert.equal(img.headers.get('content-type'), 'image/png');
+  assert.equal((await img.arrayBuffer()).byteLength, Buffer.from(png, 'base64').length);
+  assert.equal((await alice.call('GET', `/users/${bob.id}`)).user.avatar, up.user.avatar, 'others see the new picture');
+  const back = await bob.call('DELETE', '/me/avatar');
+  assert.equal(back.user.hasCustomAvatar, false, 'can go back to the Discord picture');
+});
+
+await test('repeating lobby: per-date sign-ups, dated Discord channels in one category', async () => {
+  const first = new Date(Date.now() + 2 * 864e5); // 2 days from now
+  const { lobby } = await host.call('POST', '/lobbies', {
+    title: 'Smash Bros', visibility: 'public', maxSlots: 3, scheduledAt: first.toISOString(), repeat: 'biweekly', timeZone: 'America/New_York',
+  });
+  assert.equal(lobby.recurrence.repeat, 'biweekly');
+  assert.equal(lobby.sessions.length, 6, 'next 6 dates are open for sign-up');
+  const [d1, d2] = lobby.sessions;
+  assert.equal(Date.parse(d2.at) - Date.parse(d1.at) >= 13 * 864e5, true, 'every 2 weeks');
+  assert.ok(d1.members.some((m) => m.id === host.id), 'host is on every date');
+  const before = new Set(channels.keys());
+  assert.equal((await host.call('POST', `/lobbies/${lobby.id}/join`)).status, 400);
+
+  // alice signs up for date 1 straight from a public lobby -> channels for that date only
+  const r = await alice.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  assert.equal(r.lobby.me.isMember, true, 'signing up joins the lobby');
+  const made = [...channels.entries()].filter(([id]) => !before.has(id)).map(([id, c]) => ({ id, ...c }));
+  const cat = made.find((c) => c.type === 4);
+  const text = made.find((c) => c.type === 0);
+  const voice = made.find((c) => c.type === 2);
+  assert.equal(made.length, 3);
+  assert.equal(cat.name, 'Smash Bros');
+  assert.equal(text.name, `${d1.key}-smash-bros`, 'text channel starts with the date');
+  assert.ok(voice.name.includes(d1.key));
+  assert.equal(text.parent_id, cat.id);
+  assert.ok(text.overwrites.has(alice.id) && text.overwrites.has(host.id));
+  const s1 = r.lobby.sessions.find((s) => s.key === d1.key);
+  assert.equal(s1.signedUp, true);
+  assert.ok(s1.discord.textUrl.endsWith(text.id));
+  assert.equal(r.lobby.sessions.find((s) => s.key === d2.key).discord, null, 'no channels for a date with only the host');
+
+  // per-date slots
+  await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  assert.equal((await carol.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`)).status, 400, 'date 1 is full');
+  assert.equal((await carol.call('POST', `/lobbies/${lobby.id}/signup/${d2.key}`)).status, 200, 'date 2 still has room');
+
+  // withdraw removes access; skip deletes that date's channels
+  await bob.call('POST', `/lobbies/${lobby.id}/withdraw/${d1.key}`);
+  assert.ok(!text.overwrites.has(bob.id));
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/skip/${d1.key}`)).status, 403, 'only hosts skip dates');
+  const sk = await host.call('POST', `/lobbies/${lobby.id}/skip/${d1.key}`);
+  assert.equal(sk.lobby.sessions.find((s) => s.key === d1.key).skipped, true);
+  assert.ok(!channels.has(text.id), 'skipped date channels deleted');
+  assert.ok(channels.has(cat.id), 'category stays for the other dates');
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`)).status, 400, 'cannot sign up for a skipped date');
+
+  // leaving the lobby takes you off every date
+  await carol.call('POST', `/lobbies/${lobby.id}/leave`);
+  const after = await host.call('GET', `/lobbies/${lobby.id}`);
+  assert.ok(!after.lobby.sessions.some((s) => s.members.some((m) => m.id === carol.id)));
+
+  // list shows the next date
+  const listed = (await anon('/lobbies')).lobbies.find((l) => l.id === lobby.id);
+  assert.equal(listed.recurrence.repeat, 'biweekly');
+  assert.equal(listed.next.key, d2.key, 'skipped date is not "next"');
+});
+
+await test('repeating lobby: approval still applies, and cleanup rolls dates forward', async () => {
+  const first = new Date(Date.now() + 3600e3);
+  const { lobby } = await host.call('POST', '/lobbies', {
+    title: 'Weekly Podcast', visibility: 'approval', scheduledAt: first.toISOString(), repeat: 'weekly', timeZone: 'UTC',
+  });
+  const d1 = lobby.sessions[0];
+  const denied = await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  assert.equal(denied.status, 403);
+  assert.match(denied.error, /Request to join/);
+  await bob.call('POST', `/lobbies/${lobby.id}/join`);
+  await host.call('POST', `/lobbies/${lobby.id}/approve/${bob.id}`);
+  const ok = await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  const textUrl = ok.lobby.sessions[0].discord.textUrl;
+  const textId = textUrl.split('/').pop();
+  assert.ok(channels.has(textId));
+
+  // a date's channels live 14 days past that date; new dates keep opening
+  await runCleanup(Date.now() + 10 * 864e5);
+  assert.ok(channels.has(textId), 'kept 10 days later');
+  await runCleanup(Date.now() + 16 * 864e5);
+  assert.ok(!channels.has(textId), 'deleted 16 days later');
+  const stored = await db.lobbies.get(lobby.id);
+  const upcoming = stored.sessions.filter((s) => Date.parse(s.at) > Date.now() + 16 * 864e5);
+  assert.equal(upcoming.length >= 5, true, 'cleanup opened later dates');
+
+  // can't turn it back into a one-time lobby; schedule edits move dates
+  assert.equal((await host.call('PUT', `/lobbies/${lobby.id}`, { title: 'Weekly Podcast', repeat: 'none' })).status, 400);
+  const monthly = await host.call('PUT', `/lobbies/${lobby.id}`, { title: 'Weekly Podcast', scheduledAt: first.toISOString(), repeat: 'monthly', timeZone: 'UTC' });
+  const gaps = monthly.lobby.sessions.slice(1).map((s, i) => Date.parse(s.at) - Date.parse(monthly.lobby.sessions[i].at));
+  assert.ok(gaps.every((g) => g >= 28 * 864e5), 'dates follow the new monthly schedule');
 });
 
 console.log(`\n${passed} tests passed (${calls.length} fake Discord calls)`);

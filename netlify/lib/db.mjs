@@ -55,6 +55,12 @@ export const db = {
     del: (id) => del('lobbies', id),
     all: () => all('lobbies'),
   },
+  // Uploaded profile pictures: { type, data (base64), v }
+  avatars: {
+    get: (id) => get('avatars', id),
+    put: (id, a) => put('avatars', id, a),
+    del: (id) => del('avatars', id),
+  },
   clips: {
     get: (id) => get('clips', id),
     put: (c) => put('clips', c.id, c),

@@ -55,6 +55,10 @@ const toLocalInput = (iso) => {
 const ICON = {
   youtube: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="5" fill="#ff3b3b"/><path d="M10 8.5v7l6-3.5z" fill="#fff"/></svg>',
   twitch: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2 2.5 6v14h5v3h3l3-3h4l4.5-4.5V2z" fill="#a970ff"/><path d="M6.5 4h13v10.5L17 17h-4.5l-3 3v-3h-3z" fill="#1a1628"/><path d="M11 7h2v5h-2zm5 0h2v5h-2z" fill="#a970ff"/></svg>',
+  tiktok: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#111"/><path d="M13.9 5.5h2.2c.2 1.6 1.3 2.8 3 3v2.3a5.6 5.6 0 0 1-3-1v4.9a4.2 4.2 0 1 1-4.2-4.2h.4v2.3h-.4a1.9 1.9 0 1 0 1.9 1.9z" fill="#25f4ee" transform="translate(-.6 -.4)"/><path d="M13.9 5.5h2.2c.2 1.6 1.3 2.8 3 3v2.3a5.6 5.6 0 0 1-3-1v4.9a4.2 4.2 0 1 1-4.2-4.2h.4v2.3h-.4a1.9 1.9 0 1 0 1.9 1.9z" fill="#fe2c55" transform="translate(.6 .4)"/><path d="M13.9 5.5h2.2c.2 1.6 1.3 2.8 3 3v2.3a5.6 5.6 0 0 1-3-1v4.9a4.2 4.2 0 1 1-4.2-4.2h.4v2.3h-.4a1.9 1.9 0 1 0 1.9 1.9z" fill="#fff"/></svg>',
+  instagram: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="igg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#feda75"/><stop offset=".35" stop-color="#fa7e1e"/><stop offset=".6" stop-color="#d62976"/><stop offset="1" stop-color="#4f5bd5"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#igg)"/><rect x="5.5" y="5.5" width="13" height="13" rx="4" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="12" cy="12" r="3.1" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="16.1" cy="7.9" r="1" fill="#fff"/></svg>',
+  twitter: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#000" stroke="#333"/><path d="M6 6h3.6l2.9 4 3.4-4h1.7l-4.3 5 4.9 7h-3.6l-3.1-4.4L7.7 18H6l4.6-5.4z" fill="#fff"/></svg>',
+  substack: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#ff6719"/><path d="M6.5 6h11v1.6h-11zm0 3h11v1.6h-11zm0 3h11v6.5L12 15.6l-5.5 2.9z" fill="#fff"/></svg>',
   discord: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18 18 0 0 0-5.6 0L8.6 3a19.5 19.5 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.8 19.8 0 0 0 6 3l1.3-2a12.8 12.8 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.4 8 10.4s2.2 1.1 2.2 2.5-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.5 2.2-2.5 2.2 1.1 2.2 2.5-1 2.4-2.2 2.4Z"/></svg>',
   check: '<svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1 9.4 3.2 6 2.8 5.1 6 2 7.5l1.2 3.2L2 14l3.1 1.4L6 18.7l3.4-.4L12 20.5l2.6-2.2 3.4.4.9-3.3L22 14l-1.2-3.3L22 7.5 18.9 6 18 2.8l-3.4.4zm-1.3 14.2-3.9-3.9 1.4-1.4 2.5 2.5 5.4-5.4 1.4 1.4z"/></svg>',
   bell: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.5-2.5h-5A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.8V3a1.5 1.5 0 0 0-3 0v1.2A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>',
@@ -68,6 +72,26 @@ const VIS = {
   friends: { label: 'Friends', desc: 'Only your Create & Connect friends can see and join.' },
 };
 
+const PLATFORM = {
+  youtube: { label: 'YouTube', prefix: 'youtube.com/@', placeholder: 'handle or channel URL' },
+  twitch: { label: 'Twitch', prefix: 'twitch.tv/', placeholder: 'username or URL' },
+  tiktok: { label: 'TikTok', prefix: 'tiktok.com/@', placeholder: 'username or URL' },
+  instagram: { label: 'Instagram', prefix: 'instagram.com/', placeholder: 'username or URL' },
+  twitter: { label: 'X / Twitter', prefix: 'x.com/', placeholder: 'username or URL' },
+  substack: { label: 'Substack', prefix: 'Substack', placeholder: 'name.substack.com or URL' },
+};
+const platformLabel = (p) => PLATFORM[p]?.label || p;
+const platformOptions = (selected) => (state.config.platforms || []).map((p) => `<option value="${p}" ${selected === p ? 'selected' : ''}>${esc(platformLabel(p))}</option>`).join('');
+
+const REPEAT = {
+  none: "Doesn't repeat", daily: 'Every day', weekly: 'Every week', biweekly: 'Every 2 weeks',
+  '3weeks': 'Every 3 weeks', '4weeks': 'Every 4 weeks', monthly: 'Every month',
+};
+const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: 'long' });
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+const fmtKey = (key) => new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const repeatText = (r) => r ? `${REPEAT[r.repeat] || 'Repeats'}${r.until ? ` until ${fmtKey(r.until)}` : ''}` : '';
+
 const avatar = (u, size = 34) => `<img class="avatar" src="${esc(u?.avatar)}" alt="" width="${size}" height="${size}" loading="lazy" />`;
 const userLine = (u, size = 34, extra = '') => u ? `
   <a class="user-line" href="#/u/${esc(u.id)}">${avatar(u, size)}
@@ -80,14 +104,16 @@ const userLabel = (u, size = 34) => u ? `
     <div class="names"><div><strong>${esc(u.displayName)}</strong></div><div class="handle">@${esc(u.discordUsername)}</div></div>
   </div>` : '';
 const visTag = (v) => `<span class="tag ${esc(v)}">${esc(VIS[v]?.label || v)}</span>`;
-const platformChips = (ps) => (ps || []).map((p) => `<span class="chip ${p === 'youtube' ? 'yt' : 'tw'}">${ICON[p] || ''}${p === 'youtube' ? 'YouTube' : 'Twitch'}</span>`).join('');
+const platformChips = (ps) => (ps || []).map((p) => `<span class="chip p-${esc(p)}">${ICON[p] || ''}${esc(platformLabel(p))}</span>`).join('');
 const catChips = (cs) => (cs || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('');
 const loginUrl = '/api/auth/login';
+// Mirrors how the server names Discord channels.
+const slugify = (t) => String(t).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'lobby';
 const loginBtn = (text = 'Log in with Discord', cls = '') => `<a class="btn discord ${cls}" href="${loginUrl}">${ICON.discord} ${esc(text)}</a>`;
 
-function chipToggles(name, options, selected = []) {
+function chipToggles(name, options, selected = [], label = (o) => esc(o)) {
   return `<div class="chips" data-toggle="${esc(name)}">${options.map((o) =>
-    `<button type="button" class="chip${selected.includes(o) ? ' on' : ''}" data-value="${esc(o)}" aria-pressed="${selected.includes(o)}">${esc(o)}</button>`).join('')}</div>`;
+    `<button type="button" class="chip${selected.includes(o) ? ' on' : ''}" data-value="${esc(o)}" aria-pressed="${selected.includes(o)}">${label(o)}</button>`).join('')}</div>`;
 }
 function wireToggles(root) {
   root.querySelectorAll('[data-toggle] .chip').forEach((b) => b.addEventListener('click', () => {
@@ -251,19 +277,23 @@ async function refreshInboxCount() {
 // ---------- views ----------
 
 function lobbyCard(l) {
-  const pct = Math.round((l.memberCount / l.maxSlots) * 100);
+  // Repeating lobbies show the next date and how many signed up for it.
+  const count = l.recurrence ? (l.next?.count ?? 0) : l.memberCount;
+  const pct = Math.round((count / l.maxSlots) * 100);
+  const when = l.recurrence ? (l.next ? fmtDate(l.next.at) : 'No upcoming dates') : l.scheduledAt ? fmtDate(l.scheduledAt) : '';
   return `<a class="card lobby-card" href="#/lobbies/${esc(l.id)}">
-    <div class="row" style="justify-content:space-between">${visTag(l.visibility)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}<span class="dim" style="font-size:.85rem">${l.scheduledAt ? '🗓 ' + esc(fmtDate(l.scheduledAt)) : 'Anytime'}</span></div>
-    <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3></div>
+    <div class="row" style="justify-content:space-between">${visTag(l.visibility)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}<span class="dim" style="font-size:.85rem">${when ? '🗓 ' + esc(when) : 'Anytime'}</span></div>
+    <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3>${l.recurrence ? `<div class="repeat-line">🔁 ${esc(repeatText(l.recurrence))}</div>` : ''}</div>
     ${l.description ? `<p class="desc">${esc(l.description)}</p>` : ''}
     <div class="chips">${platformChips(l.platforms)}${catChips(l.categories)}</div>
-    <div class="foot">${userLabel(l.host, 26)}<span class="slots">${l.memberCount}/${l.maxSlots}<span class="slot-bar"><i style="width:${pct}%"></i></span></span></div>
+    <div class="foot">${userLabel(l.host, 26)}<span class="slots" title="${l.recurrence ? 'Signed up for the next date' : 'Slots taken'}">${count}/${l.maxSlots}<span class="slot-bar"><i style="width:${pct}%"></i></span></span></div>
   </a>`;
 }
 
 function creatorCard(u) {
   return `<a class="card creator-card" href="#/u/${esc(u.id)}">
-    <div class="user-line">${avatar(u, 52)}<div class="names"><div><strong>${esc(u.displayName)}</strong></div><div class="handle">@${esc(u.discordUsername)}</div></div></div>
+    <div class="creator-banner banner-${esc(u.banner)}"></div>
+    <div class="user-line">${avatar(u, 52)}<div class="names"><div><strong>${esc(u.displayName)}</strong>${u.pronouns ? ` <span class="pronouns">${esc(u.pronouns)}</span>` : ''}</div><div class="handle">@${esc(u.discordUsername)}</div></div></div>
     <div class="chips">${platformChips(Object.keys(u.platforms))}${catChips(u.categories.slice(0, 4))}</div>
     ${u.bio ? `<p class="bio">${esc(u.bio)}</p>` : ''}
     ${u.lookingFor ? `<p class="bio" style="color:var(--text)"><strong>Looking for:</strong> ${esc(u.lookingFor)}</p>` : ''}
@@ -279,7 +309,7 @@ async function viewHome(params) {
     <div class="row"><a class="btn" href="#/creators">Find creators</a><a class="btn primary" href="#/lobbies/new">Create a lobby</a></div></div>` : `
     <section class="hero">
       <h1>Find your next <span>collab</span>.</h1>
-      <p>Create &amp; Connect is where YouTube and Twitch creators meet, open lobbies for streams and videos, and jump straight into a private Discord chat together.</p>
+      <p>Create &amp; Connect is where creators from YouTube, Twitch, TikTok, Instagram, X and Substack meet, open lobbies for streams and videos, and jump straight into a private Discord chat together.</p>
       <div class="row" style="justify-content:center">${loginBtn('Sign up with Discord', 'lg')}<a class="btn lg" href="#/lobbies">Browse lobbies</a></div>
       <div class="features">
         <div class="card"><div class="feat-icon">🎮</div><h3>Open a lobby</h3><p>Planning a "Mario Party" stream or a podcast episode? Post it, set slots and visibility, and let creators join.</p></div>
@@ -315,7 +345,7 @@ async function viewLobbies(params) {
     <form class="filters" id="f">
       <input type="search" name="q" placeholder="Search title, game, description…" value="${esc(params.get('q') || '')}" />
       <select name="category"><option value="">All categories</option>${state.config.categories.map((c) => `<option ${params.get('category') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <select name="platform"><option value="">All platforms</option><option value="youtube" ${params.get('platform') === 'youtube' ? 'selected' : ''}>YouTube</option><option value="twitch" ${params.get('platform') === 'twitch' ? 'selected' : ''}>Twitch</option></select>
+      <select name="platform"><option value="">All platforms</option>${platformOptions(params.get('platform'))}</select>
     </form>
     <div class="row vis-filter" style="margin:-8px 0 20px">
       <span class="hint">Lobby type:</span>
@@ -371,7 +401,7 @@ async function viewCreators(params) {
     <form class="filters" id="f">
       <input type="search" name="q" placeholder="Search names, bios, what they're looking for…" value="${esc(params.get('q') || '')}" />
       <select name="category"><option value="">All categories</option>${state.config.categories.map((c) => `<option ${params.get('category') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <select name="platform"><option value="">All platforms</option><option value="youtube">YouTube</option><option value="twitch">Twitch</option></select>
+      <select name="platform"><option value="">All platforms</option>${platformOptions(params.get('platform'))}</select>
     </form>
     <div id="list"><div class="loading">Loading…</div></div>`;
   const form = document.getElementById('f');
@@ -391,40 +421,105 @@ function requireLogin(msg = 'Log in with Discord to continue.') {
   $app.innerHTML = `<div class="card" style="max-width:520px;margin:40px auto;text-align:center"><h2>Log in required</h2><p class="muted">${esc(msg)}</p>${loginBtn()}</div>`;
 }
 
+/** Crop to a centred square and shrink to 256x256 so uploads stay tiny. */
+async function shrinkImage(file, size = 256) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("Couldn't read that image. Try a PNG or JPG."));
+      i.src = url;
+    });
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+    const webp = c.toDataURL('image/webp', 0.86);
+    return webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/jpeg', 0.86);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function viewEditProfile(params) {
   if (!state.me) return requireLogin('Sign up with Discord to create your profile.');
   const me = state.me;
   const welcome = params.get('welcome') || !me.onboarded;
+  const banners = state.config.banners || ['violet'];
   $app.innerHTML = `
-    <div style="max-width:720px;margin:0 auto">
-      <div class="page-head"><div><h1>${welcome ? 'Set up your creator profile' : 'Edit profile'}</h1><p>${welcome ? 'Tell other creators where you post and what you make.' : ''}</p></div></div>
+    <div style="max-width:760px;margin:0 auto">
+      <div class="page-head"><div><h1>${welcome ? 'Set up your creator profile' : 'Edit profile'}</h1><p>${welcome ? 'Tell other creators where you post and what you make.' : 'Make your Create &amp; Connect profile your own.'}</p></div></div>
       <form class="card" id="pf">
         <div class="field">
-          <label>Discord</label>
-          <div class="notice ok row" style="justify-content:space-between">
-            <span class="user-line">${avatar(me, 30)} <span><strong>@${esc(me.discordUsername)}</strong></span></span>
-            <span class="verified">${ICON.check} Verified via Discord login</span>
+          <label>Profile picture</label>
+          <div class="avatar-edit">
+            <span id="av-preview">${avatar(me, 84)}</span>
+            <div>
+              <div class="row">
+                <label class="btn sm" for="av-file">Upload a picture</label>
+                <input type="file" id="av-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+                <button type="button" class="btn ghost sm" id="av-reset" ${me.hasCustomAvatar ? '' : 'hidden'}>Use my Discord picture</button>
+              </div>
+              <p class="hint" style="margin:8px 0 0">Square works best. It's cropped to a circle and saved right away.</p>
+            </div>
           </div>
-          <p class="hint" style="margin-top:8px">This is read from your Discord login, so it can't be faked.
-            ${me.inServer === true ? "You're in the Create and Connect Discord server." : me.inServer === false ? "You're not in the Create and Connect Discord server yet — you'll be asked to join when you join or host your first lobby (that's where lobby chats and voice happen)." : ''}</p>
         </div>
-        <div class="field"><label for="dn">Display name</label><input type="text" id="dn" name="displayName" maxlength="40" value="${esc(me.displayName)}" required /></div>
+        <div class="grid-2">
+          <div class="field"><label for="dn">Display name</label><input type="text" id="dn" name="displayName" maxlength="40" value="${esc(me.displayName)}" required /></div>
+          <div class="field"><label for="pn">Pronouns <span class="hint">(optional)</span></label><input type="text" id="pn" name="pronouns" maxlength="30" placeholder="e.g. she/her, they/them" value="${esc(me.pronouns)}" /></div>
+        </div>
+        <div class="field">
+          <label>Banner colour</label>
+          <div class="banner-pick">${banners.map((b) => `<label class="banner-opt banner-${b}" title="${b}"><input type="radio" name="banner" value="${b}" ${me.banner === b ? 'checked' : ''} /><span class="sr-only">${b}</span></label>`).join('')}</div>
+        </div>
         <div class="field">
           <label>Where do you create? <span class="hint">(at least one)</span></label>
           <div class="grid-2">
-            <div class="prefix-input"><span class="prefix">${ICON.youtube} youtube.com/@</span><input type="text" name="youtube" placeholder="handle or channel URL" value="${esc(me.platforms.youtube?.handle || '')}" /></div>
-            <div class="prefix-input"><span class="prefix">${ICON.twitch} twitch.tv/</span><input type="text" name="twitch" placeholder="username or URL" value="${esc(me.platforms.twitch?.handle || '')}" /></div>
+            ${(state.config.platforms || []).map((p) => `<div class="prefix-input"><span class="prefix">${ICON[p] || ''} ${esc(PLATFORM[p]?.prefix || p)}</span><input type="text" name="pl-${p}" aria-label="${esc(platformLabel(p))}" placeholder="${esc(PLATFORM[p]?.placeholder || '')}" value="${esc(me.platforms[p]?.handle || '')}" /></div>`).join('')}
           </div>
         </div>
         <div class="field"><label>What kind of content? <span class="hint">(pick up to 10)</span></label>${chipToggles('categories', state.config.categories, me.categories)}</div>
         <div class="field"><label for="bio">Bio</label><textarea id="bio" name="bio" maxlength="600" placeholder="Who are you, what's your vibe, when do you usually stream?">${esc(me.bio)}</textarea></div>
         <div class="field"><label for="lf">Looking for <span class="hint">(optional)</span></label><input type="text" id="lf" name="lookingFor" maxlength="300" placeholder="e.g. Co-op horror games on weekends, STEM explainer collabs" value="${esc(me.lookingFor)}" /></div>
+        <div class="field">
+          <label>Discord</label>
+          <div class="notice ok row" style="justify-content:space-between">
+            <span class="user-line">${ICON.discord} <span><strong>@${esc(me.discordUsername)}</strong></span></span>
+            <span class="verified">${ICON.check} Verified via Discord login</span>
+          </div>
+          <p class="hint" style="margin-top:8px">Your Discord username always shows on your profile so people know it's really you. Everything else above is yours to change.
+            ${me.inServer === true ? "You're in the Create and Connect Discord server." : me.inServer === false ? "You're not in the Create and Connect Discord server yet. You'll be asked to join when you join or host your first lobby (that's where lobby chats and voice happen)." : ''}</p>
+        </div>
         <div class="row" style="justify-content:flex-end">${me.onboarded ? `<a class="btn ghost" href="#/u/${esc(me.id)}">Cancel</a>` : ''}<button class="btn primary" type="submit">Save profile</button></div>
       </form>
       ${me.onboarded ? '<div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn danger sm" id="logout">Log out</button></div>' : ''}
     </div>`;
   const form = document.getElementById('pf');
   wireToggles(form);
+
+  const setPicture = (user) => {
+    state.me = user;
+    document.getElementById('av-preview').innerHTML = avatar(user, 84);
+    document.getElementById('av-reset').hidden = !user.hasCustomAvatar;
+    renderNav(currentRoute);
+  };
+  document.getElementById('av-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { user } = await api('PUT', '/me/avatar', { image: await shrinkImage(file) });
+      setPicture(user);
+      toast('Profile picture updated');
+    } catch (err) { toast(err.message, true); }
+  });
+  document.getElementById('av-reset').addEventListener('click', act(async () => {
+    const { user } = await api('DELETE', '/me/avatar');
+    setPicture(user);
+    toast('Using your Discord picture again');
+  }));
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -432,8 +527,9 @@ async function viewEditProfile(params) {
     btn.disabled = true;
     try {
       const { user } = await api('PUT', '/me', {
-        displayName: fd.get('displayName'), bio: fd.get('bio'), lookingFor: fd.get('lookingFor'),
-        platforms: { youtube: fd.get('youtube'), twitch: fd.get('twitch') },
+        displayName: fd.get('displayName'), pronouns: fd.get('pronouns'), banner: fd.get('banner'),
+        bio: fd.get('bio'), lookingFor: fd.get('lookingFor'),
+        platforms: Object.fromEntries((state.config.platforms || []).map((p) => [p, fd.get(`pl-${p}`)])),
         categories: readToggles(form, 'categories'),
       });
       state.me = user;
@@ -477,19 +573,22 @@ async function viewProfile(id) {
     friends: `<button class="btn ghost" data-friend="remove">✓ Friends · Remove</button>`,
   }[d.friendStatus];
   $app.innerHTML = `
-    <div class="card">
+    <div class="card profile-card">
+      <div class="profile-banner banner-${esc(u.banner)}"></div>
       <div class="profile-head">
-        ${avatar(u, 96)}
+        ${avatar(u, 104)}
         <div>
-          <h1>${esc(u.displayName)}</h1>
+          <h1>${esc(u.displayName)}${u.pronouns ? ` <span class="pronouns">${esc(u.pronouns)}</span>` : ''}</h1>
           <div class="row" style="gap:10px;margin-top:4px"><span class="muted">${ICON.discord.replace('currentColor', '#8ea1ff')} @${esc(u.discordUsername)}</span><span class="verified">${ICON.check} Verified</span><span class="dim">· ${u.friendCount} friend${u.friendCount === 1 ? '' : 's'}</span></div>
-          <div class="platform-links">${Object.entries(u.platforms).map(([p, v]) => `<a class="platform-link ${p}" href="${esc(v.url)}" target="_blank" rel="noopener">${ICON[p]} ${esc(v.handle)}</a>`).join('')}</div>
+          <div class="platform-links">${Object.entries(u.platforms).map(([p, v]) => `<a class="platform-link ${esc(p)}" href="${esc(v.url)}" target="_blank" rel="noopener" title="${esc(platformLabel(p))}">${ICON[p] || ''} ${esc(v.handle)}</a>`).join('')}</div>
         </div>
         <div class="actions">${self ? '<a class="btn" href="#/me/edit">Edit profile</a><a class="btn" href="#/friends">Friends</a>' : friendBtn}</div>
       </div>
-      <div class="chips" style="margin-top:18px">${catChips(u.categories)}</div>
-      ${u.bio ? `<p class="desc-text" style="margin:16px 0 0">${esc(u.bio)}</p>` : ''}
-      ${u.lookingFor ? `<p style="margin:12px 0 0"><strong>Looking for:</strong> <span class="muted">${esc(u.lookingFor)}</span></p>` : ''}
+      <div class="profile-body">
+        <div class="chips">${catChips(u.categories)}</div>
+        ${u.bio ? `<p class="desc-text" style="margin:16px 0 0">${esc(u.bio)}</p>` : ''}
+        ${u.lookingFor ? `<p style="margin:12px 0 0"><strong>Looking for:</strong> <span class="muted">${esc(u.lookingFor)}</span></p>` : ''}
+      </div>
     </div>
 
     <section class="section">
@@ -553,19 +652,27 @@ async function viewLobbyForm(id) {
   const l = id ? (await api('GET', `/lobbies/${encodeURIComponent(id)}`)).lobby : null;
   if (l && !l.me.isManager) { toast('Only hosts can edit this lobby', true); location.hash = `#/lobbies/${id}`; return; }
   const v = l?.visibility || 'public';
+  const rep0 = l?.recurrence?.repeat || 'none';
+  // A repeating lobby can't go back to one-time (its dates have sign-ups and channels).
+  const repeatChoices = Object.entries(REPEAT).filter(([k]) => !(l?.recurrence && k === 'none'));
   $app.innerHTML = `
     <div style="max-width:760px;margin:0 auto">
       <div class="page-head"><div><h1>${l ? 'Edit lobby' : 'Create a lobby'}</h1><p>${l ? '' : 'Post a stream, video or collab you want people for.'}</p></div></div>
       <form class="card" id="lf">
         <div class="field"><label for="t">Title</label><input type="text" id="t" name="title" required maxlength="80" placeholder="Mario Party Friday night chaos" value="${esc(l?.title)}" /></div>
-        <div class="grid-2">
-          <div class="field"><label for="g">Game / activity <span class="hint">(optional)</span></label><input type="text" id="g" name="game" maxlength="80" placeholder="Mario Party Superstars" value="${esc(l?.game)}" /></div>
-          <div class="field"><label for="w">When <span class="hint">(optional, your local time)</span></label><input type="datetime-local" id="w" name="scheduledAt" value="${esc(toLocalInput(l?.scheduledAt))}" /></div>
+        <div class="field"><label for="g">Game / activity <span class="hint">(optional)</span></label><input type="text" id="g" name="game" maxlength="80" placeholder="Mario Party Superstars" value="${esc(l?.game)}" /></div>
+        <div class="repeat-box">
+          <div class="grid-3">
+            <div class="field"><label for="w"><span id="w-label">When</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><input type="datetime-local" id="w" name="scheduledAt" value="${esc(toLocalInput(l?.scheduledAt))}" /></div>
+            <div class="field"><label for="rp">Repeats</label><select id="rp" name="repeat">${repeatChoices.map(([k, label]) => `<option value="${k}" ${rep0 === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+            <div class="field" id="until-field"><label for="ru">Until <span class="hint">(optional)</span></label><input type="date" id="ru" name="repeatUntil" value="${esc(l?.recurrence?.until || '')}" /></div>
+          </div>
+          <p class="hint" id="repeat-hint" style="margin:0"></p>
         </div>
         <div class="field"><label for="d">Description</label><textarea id="d" name="description" maxlength="2000" placeholder="What's the plan, what are you looking for in collaborators, any requirements?">${esc(l?.description)}</textarea></div>
         <div class="grid-2">
-          <div class="field"><label for="s">Total slots <span class="hint">(including you)</span></label><input type="number" id="s" name="maxSlots" min="2" max="100" value="${esc(l?.maxSlots || 4)}" /></div>
-          <div class="field"><label>Streaming / posting on</label>${chipToggles('platforms', ['youtube', 'twitch'], l?.platforms || Object.keys(state.me.platforms)).replace(/>youtube</, '>YouTube<').replace(/>twitch</, '>Twitch<')}</div>
+          <div class="field"><label for="s"><span id="slots-label">Total slots</span> <span class="hint">(including you)</span></label><input type="number" id="s" name="maxSlots" min="2" max="100" value="${esc(l?.maxSlots || 4)}" /></div>
+          <div class="field"><label>Streaming / posting on</label>${chipToggles('platforms', state.config.platforms || [], l?.platforms || Object.keys(state.me.platforms), (p) => `${ICON[p] || ''}${esc(platformLabel(p))}`)}</div>
         </div>
         <div class="field"><label>Categories <span class="hint">(up to 6)</span></label>${chipToggles('categories', state.config.categories, l?.categories || [])}</div>
         <div class="field">
@@ -588,6 +695,27 @@ async function viewLobbyForm(id) {
     hint.textContent = val === 'code' ? 'A 4-digit code is generated after you save. Only you and co-hosts can see it, and you can regenerate it anytime.' : val === 'private' ? 'Only invited creators will see this lobby at all.' : val === 'friends' ? 'Only people on your friends list will see this lobby.' : '';
   };
   form.addEventListener('change', updateHint); updateHint();
+
+  const whenInput = form.scheduledAt;
+  const updateRepeat = () => {
+    const r = form.repeat.value;
+    const repeating = r !== 'none';
+    document.getElementById('until-field').hidden = !repeating;
+    whenInput.required = repeating;
+    document.getElementById('w-label').textContent = repeating ? 'First date' : 'When';
+    document.getElementById('w-hint').textContent = repeating ? '(your local time)' : '(optional, your local time)';
+    document.getElementById('slots-label').textContent = repeating ? 'Slots per date' : 'Total slots';
+    const at = whenInput.value ? new Date(whenInput.value).toISOString() : null;
+    const pattern = !at ? '' : r === 'daily' ? `Every day at ${fmtTime(at)}.`
+      : r === 'monthly' ? `Every month on day ${new Date(at).getDate()} at ${fmtTime(at)}.`
+      : `${REPEAT[r]} on ${fmtDay(at)} at ${fmtTime(at)}.`;
+    document.getElementById('repeat-hint').textContent = repeating
+      ? `${pattern} People sign up for the dates they can make. Each date gets its own Discord text + voice channel, named with the date, once 2+ people sign up.`
+      : '';
+  };
+  form.repeat.addEventListener('change', updateRepeat);
+  whenInput.addEventListener('input', updateRepeat);
+  updateRepeat();
   const cohostPicker = form.querySelector('#cohosts') ? userPicker(form.querySelector('#cohosts'), { initial: l?.coHosts || [], exclude: [state.me.id] }) : null;
   const invitePicker = form.querySelector('#invites') ? userPicker(form.querySelector('#invites'), { exclude: [state.me.id] }) : null;
   form.addEventListener('submit', async (e) => {
@@ -598,6 +726,8 @@ async function viewLobbyForm(id) {
       title: fd.get('title'), game: fd.get('game'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
       visibility: fd.get('visibility'), scheduledAt: when ? new Date(when).toISOString() : null,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
+      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     if (cohostPicker) payload.coHostIds = cohostPicker.get().map((u) => u.id);
     if (invitePicker && payload.visibility === 'private') payload.invitedIds = invitePicker.get().map((u) => u.id);
@@ -633,9 +763,13 @@ async function viewLobby(id) {
     if (!open) return `<div class="notice">This lobby is ${esc(l.status)}${l.completedAt ? ' (' + esc(fmtDate(l.completedAt)) + ')' : ''}.</div>`;
     if (!state.me) return `<p class="muted">Log in to join this lobby.</p>${loginBtn()}`;
     if (!state.me.onboarded) return `<p class="muted">Finish your profile before joining.</p><a class="btn primary" href="#/me/edit">Finish profile</a>`;
+    if (me.isMember && l.recurrence) return me.isHost
+      ? `<div class="notice ok">You're hosting this lobby.</div><p class="hint" style="margin:10px 0 0">You're signed up for every date. Withdraw from any you'll miss, or skip a date for everyone.</p>`
+      : `<div class="notice ok">You're in! 🎉</div><p class="hint" style="margin:10px 0 0">Sign up for the dates you can make below.</p><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     if (me.isMember) return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>` : `<div class="notice ok">You're in! 🎉</div><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><button class="btn ghost sm" id="leave" style="margin-top:12px">Cancel request</button>`;
-    if (full) return `<div class="notice">This lobby is full.</div>`;
+    if (full && !l.recurrence) return `<div class="notice">This lobby is full.</div>`;
+    if (l.recurrence && ['public', 'friends'].includes(l.visibility) && !me.invited) return `<p class="muted" style="margin:0">Pick the dates you can make in the <strong>Dates</strong> list. Signing up for a date joins the lobby.</p>`;
     if (me.invited) return `<div class="notice ok">You were invited!</div><div class="row" style="margin-top:12px"><button class="btn primary" id="join">Join lobby</button><button class="btn ghost sm" id="decline">Decline</button></div>`;
     switch (l.visibility) {
       case 'approval': return `<p class="muted">The host approves who gets a slot.</p><button class="btn primary" id="join">Request to join</button>`;
@@ -659,9 +793,48 @@ async function viewLobby(id) {
       <div class="row"><a class="btn discord" href="${esc(dc.textUrl)}" target="_blank" rel="noopener"># Text chat</a><a class="btn discord" href="${esc(dc.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a></div>
       ${l.status === 'completed' ? '<p class="hint" style="margin:10px 0 0">Channels are deleted 14 days after the lobby was completed.</p>' : ''}
       ${dc.missingAccess.length ? `<p class="hint" style="margin:10px 0 0">⚠️ Couldn't add ${dc.missingAccess.map((u) => esc(u.displayName)).join(', ')} — they need to join the Discord server (log out &amp; back in here).</p>` : ''}`;
+    else if (l.recurrence) inner = `<p class="muted" style="margin:0">This lobby has its own category in the Create and Connect server. Each date gets a private text + voice channel named with the date (like <code>${esc(l.sessions?.[0]?.key || '2026-12-07')}-${esc(slugify(l.title))}</code>) once 2 or more people sign up for it. Links show up next to your dates.</p>`;
     else inner = '<p class="muted" style="margin:0">A private text + voice channel opens automatically once 2 or more people are in the lobby.</p>';
     const err = dc.error ? `<div class="notice warn" style="margin-top:12px">${esc(dc.error)}</div>${me.isManager ? '<button class="btn sm" id="sync-discord" style="margin-top:10px">↻ Retry Discord setup</button>' : ''}` : '';
     return `<div class="card discord-panel"><h2 class="row" style="gap:8px">${ICON.discord} Discord</h2>${inner}${err}</div>`;
+  }
+
+  function datesCard() {
+    if (!l.recurrence) return '';
+    const sessions = l.sessions || [];
+    // Who may sign up straight away (others must join / be approved / enter the code first).
+    const canPick = !!state.me && state.me.onboarded && open &&
+      (me.isMember || me.isManager || me.invited || ['public', 'friends'].includes(l.visibility));
+    const gate = !state.me ? 'Log in to sign up for dates.'
+      : !open ? ''
+      : canPick ? ''
+      : l.visibility === 'approval' ? 'Request to join first. Once a host approves you, you can pick dates.'
+      : l.visibility === 'code' ? 'Enter the lobby code first, then pick your dates.'
+      : '';
+    const row = (s) => {
+      const fullDate = s.count >= l.maxSlots;
+      let action = '';
+      if (s.skipped) action = `<span class="tag completed">Skipped</span>${me.isManager && !s.past ? `<button class="btn ghost sm" data-unskip="${esc(s.key)}">Restore</button>` : ''}`;
+      else if (s.past) action = '<span class="tag completed">Done</span>';
+      else if (s.signedUp) action = `<span class="going">✓ Going</span><button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
+      else if (canPick) action = fullDate ? '<span class="dim">Full</span>' : `<button class="btn primary sm" data-signup="${esc(s.key)}">Sign up</button>`;
+      const skip = me.isManager && !s.skipped && !s.past ? `<button class="btn ghost sm" data-skip="${esc(s.key)}" title="Cancel this date for everyone">Skip date</button>` : '';
+      const links = s.discord ? `<div class="row" style="gap:6px"><a class="btn discord sm" href="${esc(s.discord.textUrl)}" target="_blank" rel="noopener"># Chat</a>${s.discord.voiceUrl ? `<a class="btn discord sm" href="${esc(s.discord.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a>` : ''}</div>` : '';
+      return `<div class="date-row${s.skipped || s.past ? ' muted-row' : ''}">
+        <div class="date-when"><strong>${esc(new Date(s.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</strong><span class="dim">${esc(fmtTime(s.at))}</span></div>
+        <div class="date-who">
+          <div class="avatars">${s.members.slice(0, 6).map((u) => `<a href="#/u/${esc(u.id)}" title="${esc(u.displayName)}">${avatar(u, 26)}</a>`).join('')}${s.members.length > 6 ? `<span class="dim">+${s.members.length - 6}</span>` : ''}</div>
+          <span class="dim" style="font-size:.85rem">${s.count}/${l.maxSlots} going</span>
+        </div>
+        <div class="date-actions">${links}${action}${skip}</div>
+      </div>`;
+    };
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">Dates</h2><span class="dim">🔁 ${esc(repeatText(l.recurrence))}</span></div>
+      ${gate ? `<div class="notice" style="margin:8px 0 4px">${esc(gate)}</div>` : ''}
+      ${sessions.length ? sessions.map(row).join('') : '<p class="dim" style="margin:8px 0 0">No upcoming dates.</p>'}
+      <p class="hint" style="margin:12px 0 0">New dates open automatically as old ones pass.</p>
+    </div>`;
   }
 
   function managerBox() {
@@ -691,20 +864,23 @@ async function viewLobby(id) {
             <div class="row">${visTag(l.visibility)}${l.status !== 'open' ? `<span class="tag completed">${esc(l.status)}</span>` : ''}${platformChips(l.platforms)}</div>
             ${l.game ? `<div style="color:var(--accent-2);font-weight:600;margin-top:14px">${esc(l.game)}</div>` : ''}
             <h1 class="lobby-title">${esc(l.title)}</h1>
-            <div class="meta-row"><span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>${l.visibility === 'approval' && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
+            <div class="meta-row">${l.recurrence
+              ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtDate(l.next.at))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
+              : `<span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.visibility === 'approval' && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>
             ${l.description ? `<p class="desc-text" style="margin-top:18px">${esc(l.description)}</p>` : ''}
           </div>
+          ${datesCard()}
           <div class="card">
             <h2>Hosted by</h2>
             <div class="row" style="gap:24px">${userLine(l.host, 40, '<span class="tag code" style="margin-left:4px">Host</span>')}${l.coHosts.map((u) => userLine(u, 40, '<span class="tag friends" style="margin-left:4px">Co-host</span>')).join('')}</div>
           </div>
           <div class="card">
-            <h2>Who's in (${l.members.length}/${l.maxSlots})</h2>
+            <h2>${l.recurrence ? `Members (${l.members.length})` : `Who's in (${l.members.length}/${l.maxSlots})`}</h2>
             <div class="member-list">
               ${l.members.map((u) => `<div class="member">${userLine(u, 34)}${me.isManager && u.id !== l.hostId && u.id !== state.me?.id ? `<button class="btn ghost sm" data-kick="${esc(u.id)}">Remove</button>` : ''}</div>`).join('')}
-              ${Array.from({ length: Math.min(slotsLeft, 8) }, () => '<div class="open-slot"><i></i>Open slot</div>').join('')}
-              ${slotsLeft > 8 ? `<div class="dim">+ ${slotsLeft - 8} more open slots</div>` : ''}
+              ${l.recurrence ? '' : Array.from({ length: Math.min(slotsLeft, 8) }, () => '<div class="open-slot"><i></i>Open slot</div>').join('')}
+              ${!l.recurrence && slotsLeft > 8 ? `<div class="dim">+ ${slotsLeft - 8} more open slots</div>` : ''}
             </div>
           </div>
         </div>
@@ -732,7 +908,7 @@ async function viewLobby(id) {
       return r;
     });
     on('#regen', async () => { const r = await api('POST', `${base}/regenerate-code`); toast('New code generated'); return r; });
-    on('#complete', async () => { if (!confirm('Mark this lobby as completed? Its Discord channels will be deleted in 14 days.')) return; return api('POST', `${base}/complete`); });
+    on('#complete', async () => { if (!confirm(l.recurrence ? 'Mark this repeating lobby as completed? No new dates will open, and its Discord channels and category will be deleted in 14 days.' : 'Mark this lobby as completed? Its Discord channels will be deleted in 14 days.')) return; return api('POST', `${base}/complete`); });
     on('#reopen', () => api('POST', `${base}/reopen`));
     on('#cancel', async () => {
       if (!confirm('Cancel this lobby? It will be removed and its Discord channels deleted right away.')) return;
@@ -741,6 +917,18 @@ async function viewLobby(id) {
     document.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/approve/${b.dataset.approve}`))));
     document.querySelectorAll('[data-deny]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/deny/${b.dataset.deny}`))));
     document.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', run(async () => { if (!confirm('Remove this person from the lobby?')) return; return api('POST', `${base}/kick/${b.dataset.kick}`); })));
+    document.querySelectorAll('[data-signup]').forEach((b) => b.addEventListener('click', run(() => withServerCheck(async () => {
+      const r = await api('POST', `${base}/signup/${b.dataset.signup}`);
+      toast("You're signed up for that date!");
+      l = r.lobby; render();
+      return r;
+    }))));
+    document.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/withdraw/${b.dataset.withdraw}`))));
+    document.querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', run(async () => {
+      if (!confirm('Skip this date for everyone? Its Discord channels (if any) are deleted now.')) return;
+      return api('POST', `${base}/skip/${b.dataset.skip}`);
+    })));
+    document.querySelectorAll('[data-unskip]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/unskip/${b.dataset.unskip}`))));
     document.querySelectorAll('[data-uninvite]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/uninvite/${b.dataset.uninvite}`))));
     const codef = document.getElementById('codef');
     codef?.addEventListener('submit', async (e) => {

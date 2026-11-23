@@ -2,6 +2,8 @@
 // user's real Discord account) plus a bot user that only uses Discord's REST
 // API (no always-on gateway process needed, so it runs fine on Netlify).
 
+import { isPast } from './model.mjs';
+
 const API = 'https://discord.com/api/v10';
 
 // Permission bits (https://discord.com/developers/docs/topics/permissions)
@@ -66,9 +68,9 @@ export function explainDiscordError(e) {
   const raw = JSON.stringify(e.data || {});
   if (e.status === 401) return 'Discord rejected the bot token. Copy a fresh token (Developer Portal → Bot → Reset Token), update DISCORD_BOT_TOKEN in Netlify, and redeploy.';
   if (e.code === 10004 || (e.status === 404 && /guild/i.test(raw))) return 'Discord says that server doesn\'t exist for this bot. Check DISCORD_GUILD_ID in Netlify and that the bot was added to the Create and Connect server.';
-  if (e.code === 50001) return 'The bot is missing access. Make sure it is in the Create and Connect server (invite it via Developer Portal → OAuth2 → URL Generator → "bot" + Administrator), and that it can see the lobby category if DISCORD_CATEGORY_ID is set.';
+  if (e.code === 50001) return 'The bot is missing access. Make sure it is in the Create and Connect server (invite it via Developer Portal → OAuth2 → URL Generator → "bot" + Administrator).';
   if (e.code === 50013) return 'The bot is missing permissions. First check the bot is actually in the Create and Connect server (invite it via Developer Portal → OAuth2 → URL Generator → "bot" + Administrator). If it is, go to Server Settings → Roles → the bot\'s role → turn on Administrator.';
-  if (e.status === 400 && /parent_id/.test(raw)) return 'DISCORD_CATEGORY_ID is not a category in this server. Fix it in Netlify (or delete it) and redeploy.';
+  if (e.code === 30013 || /maximum number of (guild )?channels/i.test(raw)) return 'The Discord server hit its 500-channel limit. Delete some old channels or categories in Discord, then retry.';
   if (e.status === 403 && !e.code) return 'Discord blocked the request (HTTP 403). This is usually temporary — try again in a minute.';
   return `Discord error ${e.status || ''}${e.code ? ` (code ${e.code})` : ''}: ${e.data?.message || e.message}`.trim();
 }
@@ -142,6 +144,9 @@ export async function addToGuild(userId, accessToken) {
 }
 
 // ---------- Lobby channels ----------
+// Every lobby gets its own Discord category. A one-time lobby has one text + voice
+// channel in it. A repeating lobby gets a text + voice channel per date, named
+// with the date first (e.g. "2026-12-07-smash-bros").
 
 function channelSlug(title) {
   const s = String(title).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -160,9 +165,99 @@ async function removeMember(channelId, userId) {
   }
 }
 
+async function deleteChannel(id) {
+  if (!id) return;
+  try {
+    await bot('DELETE', `/channels/${id}`);
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+}
+
+const hidden = () => [
+  { id: process.env.DISCORD_GUILD_ID, type: 0, allow: '0', deny: String(P.VIEW_CHANNEL) }, // hide from @everyone
+  { id: process.env.DISCORD_CLIENT_ID, type: 1, allow: BOT_ALLOW, deny: '0' }, // keep bot access
+];
+
+/** Give `want` access to the channels and take it from anyone else we added before. */
+async function syncAccess(channelIds, want, haveList) {
+  const have = new Set(haveList || []);
+  const failed = [];
+  for (const uid of want) {
+    if (have.has(uid)) continue;
+    try {
+      for (const id of channelIds) await setMember(id, uid);
+      have.add(uid);
+    } catch (e) {
+      console.error('Could not grant channel access to', uid, e.message);
+      failed.push(uid);
+    }
+  }
+  for (const uid of [...have]) {
+    if (want.includes(uid)) continue;
+    for (const id of channelIds) await removeMember(id, uid);
+    have.delete(uid);
+  }
+  return { have: [...have], failed };
+}
+
+async function ensureCategory(lobby, d) {
+  if (!d.categoryId) {
+    const cat = await bot('POST', `/guilds/${process.env.DISCORD_GUILD_ID}/channels`, {
+      name: String(lobby.title).slice(0, 100), type: 4, permission_overwrites: hidden(),
+    });
+    d.categoryId = cat.id;
+    d.categoryMemberIds = [];
+  }
+  // Members can see the category header too (their own channels inside are what matter).
+  const { have } = await syncAccess([d.categoryId], lobby.memberIds, d.categoryMemberIds);
+  d.categoryMemberIds = have;
+  return d.categoryId;
+}
+
+/** Create (once) and sync one text + voice pair. `room` is where the IDs are saved. */
+async function syncRoom(room, { name, voiceName, topic, parentId, memberIds, welcome }) {
+  const guild = process.env.DISCORD_GUILD_ID;
+  const base = { parent_id: parentId || undefined, permission_overwrites: hidden() };
+  // Each ID is saved as soon as it exists, so a failure halfway never leaves an orphan channel.
+  if (!room.textId) {
+    const text = await bot('POST', `/guilds/${guild}/channels`, { ...base, name, type: 0, topic: topic.slice(0, 1024) });
+    room.textId = text.id;
+    room.memberIds = [];
+    room.createdAt = new Date().toISOString();
+  }
+  if (!room.voiceId) {
+    const voice = await bot('POST', `/guilds/${guild}/channels`, { ...base, name: voiceName.slice(0, 100), type: 2 });
+    room.voiceId = voice.id;
+    room.memberIds = []; // re-apply member access to both channels
+  }
+  const before = room.memberIds || [];
+  const { have, failed } = await syncAccess([room.textId, room.voiceId], memberIds, before);
+  const newlyAdded = have.filter((u) => !before.includes(u));
+  room.memberIds = have;
+  room.failedIds = failed;
+  if (newlyAdded.length) {
+    await bot('POST', `/channels/${room.textId}/messages`, {
+      content: welcome(newlyAdded.map((u) => `<@${u}>`).join(' ')),
+      allowed_mentions: { users: newlyAdded },
+    }).catch((e) => console.error('welcome message failed', e.message));
+  }
+}
+
+export function sessionLabel(lobby, s) {
+  return new Date(s.at).toLocaleString('en-US', {
+    timeZone: lobby.recurrence?.timeZone || 'UTC', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  });
+}
+
+/** Dates of a repeating lobby that should have channels right now. */
+const activeSessions = (lobby, nowMs = Date.now()) => (lobby.sessions || []).filter((s) =>
+  s.status !== 'skipped' && !isPast(s, nowMs) && !s.discord?.deletedAt && (s.discord?.textId || s.memberIds.length >= 2));
+
 /**
- * Make the lobby's private Discord text + voice channels match its member list.
- * Creates them once the lobby has 2+ members. Mutates and returns lobby.discord.
+ * Make the lobby's private Discord channels match its member / sign-up lists.
+ * Channels open once 2+ people are in (per date for repeating lobbies).
+ * Mutates and returns lobby.discord.
  */
 export async function syncLobbyChannels(lobby, siteUrl) {
   lobby.discord ||= {};
@@ -174,71 +269,45 @@ export async function syncLobbyChannels(lobby, siteUrl) {
     console.error('syncLobbyChannels skipped:', d.error);
     return d;
   }
-  const memberIds = lobby.memberIds;
-  if (!d.textId && memberIds.length < 2) {
-    d.error = null; // nothing to do yet; channels open once a 2nd person joins
-    return d;
-  }
-
-  const guild = process.env.DISCORD_GUILD_ID;
+  const page = `${siteUrl}/#/lobbies/${lobby.id}`;
+  const slug = channelSlug(lobby.title);
   try {
-    const base = {
-      parent_id: process.env.DISCORD_CATEGORY_ID || undefined,
-      permission_overwrites: [
-        { id: guild, type: 0, allow: '0', deny: String(P.VIEW_CHANNEL) }, // hide from @everyone
-        { id: process.env.DISCORD_CLIENT_ID, type: 1, allow: BOT_ALLOW, deny: '0' }, // keep bot access
-      ],
-    };
-    // Each ID is saved as soon as it exists, so a failure halfway never leaves an orphan channel.
-    if (!d.textId) {
-      const text = await bot('POST', `/guilds/${guild}/channels`, {
-        ...base,
-        name: channelSlug(lobby.title),
-        type: 0,
-        topic: `Create & Connect lobby: ${lobby.title} — ${siteUrl}/#/lobbies/${lobby.id}`.slice(0, 1024),
-      });
-      d.textId = text.id;
-      d.memberIds = [];
-      d.createdAt = new Date().toISOString();
-    }
-    if (!d.voiceId) {
-      const voice = await bot('POST', `/guilds/${guild}/channels`, { ...base, name: `🔊 ${lobby.title}`.slice(0, 100), type: 2 });
-      d.voiceId = voice.id;
-      d.memberIds = []; // re-apply member access to both channels
-    }
-
-    const want = new Set(memberIds);
-    const have = new Set(d.memberIds || []);
-    const failed = [];
-    for (const uid of want) {
-      if (have.has(uid)) continue;
-      try {
-        await setMember(d.textId, uid);
-        await setMember(d.voiceId, uid);
-        have.add(uid);
-      } catch (e) {
-        console.error('Could not grant channel access to', uid, e.message);
-        failed.push(uid);
+    if (lobby.recurrence) {
+      const sessions = activeSessions(lobby);
+      if (!sessions.length && !d.categoryId) { d.error = null; return d; }
+      const parentId = await ensureCategory(lobby, d);
+      const failed = new Set();
+      for (const s of sessions) {
+        s.discord ||= {};
+        const when = sessionLabel(lobby, s);
+        await syncRoom(s.discord, {
+          name: `${s.key}-${slug}`.slice(0, 100),
+          voiceName: `🔊 ${s.key} ${lobby.title}`,
+          topic: `Create & Connect: ${lobby.title} on ${when} — ${page}`,
+          parentId,
+          memberIds: s.memberIds,
+          welcome: (mentions) => `👋 Welcome ${mentions} to **${lobby.title}** on **${when}**! This chat and the voice channel are private to people signed up for this date.\nLobby page: ${page}`,
+        });
+        for (const u of s.discord.failedIds || []) failed.add(u);
       }
+      d.failedIds = [...failed];
+    } else {
+      if (!d.textId && lobby.memberIds.length < 2) {
+        d.error = null; // nothing to do yet; channels open once a 2nd person joins
+        return d;
+      }
+      // Lobbies whose channels were made before categories existed keep their old spot.
+      const parentId = d.textId && !d.categoryId ? undefined : await ensureCategory(lobby, d);
+      await syncRoom(d, {
+        name: slug,
+        voiceName: `🔊 ${lobby.title}`,
+        topic: `Create & Connect lobby: ${lobby.title} — ${page}`,
+        parentId,
+        memberIds: lobby.memberIds,
+        welcome: (mentions) => `👋 Welcome ${mentions} to **${lobby.title}**! This chat and the voice channel are private to lobby members.\nLobby page: ${page}`,
+      });
     }
-    for (const uid of [...have]) {
-      if (want.has(uid)) continue;
-      await removeMember(d.textId, uid);
-      await removeMember(d.voiceId, uid);
-      have.delete(uid);
-    }
-    const newlyAdded = [...have].filter((u) => !(d.memberIds || []).includes(u));
-    d.memberIds = [...have];
-    d.failedIds = failed;
     d.error = null;
-
-    if (newlyAdded.length) {
-      const mentions = newlyAdded.map((u) => `<@${u}>`).join(' ');
-      await bot('POST', `/channels/${d.textId}/messages`, {
-        content: `👋 Welcome ${mentions} to **${lobby.title}**! This chat and the voice channel are private to lobby members.\nLobby page: ${siteUrl}/#/lobbies/${lobby.id}`,
-        allowed_mentions: { users: newlyAdded },
-      }).catch((e) => console.error('welcome message failed', e.message));
-    }
   } catch (e) {
     console.error('syncLobbyChannels failed', e.message);
     d.error = explainDiscordError(e);
@@ -247,21 +316,37 @@ export async function syncLobbyChannels(lobby, siteUrl) {
 }
 
 export async function postToLobby(lobby, content) {
-  if (!discordConfigured() || !lobby.discord?.textId || lobby.discord.deletedAt) return;
-  await bot('POST', `/channels/${lobby.discord.textId}/messages`, { content, allowed_mentions: { parse: [] } })
-    .catch((e) => console.error('postToLobby failed', e.message));
+  const d = lobby.discord;
+  if (!discordConfigured() || !d || d.deletedAt) return;
+  const ids = [d.textId, ...activeSessions(lobby).map((s) => s.discord?.textId)].filter(Boolean);
+  for (const id of ids) {
+    await bot('POST', `/channels/${id}/messages`, { content, allowed_mentions: { parse: [] } })
+      .catch((e) => console.error('postToLobby failed', e.message));
+  }
 }
 
+/** Delete one date's (or a one-time lobby's) text + voice channels. */
+export async function deleteRoom(room) {
+  if (!room || room.deletedAt || !room.textId && !room.voiceId) return;
+  if (!discordConfigured()) return;
+  await deleteChannel(room.textId);
+  await deleteChannel(room.voiceId);
+  room.deletedAt = new Date().toISOString();
+}
+
+export const hasChannels = (lobby) => {
+  const d = lobby.discord;
+  if (!d || d.deletedAt) return false;
+  return !!(d.textId || d.categoryId || (lobby.sessions || []).some((s) => s.discord?.textId && !s.discord.deletedAt));
+};
+
+/** Delete everything: every date's channels, the main channels, and the category. */
 export async function deleteLobbyChannels(lobby) {
   const d = lobby.discord;
   if (!d || d.deletedAt || !discordConfigured()) return;
-  for (const id of [d.textId, d.voiceId]) {
-    if (!id) continue;
-    try {
-      await bot('DELETE', `/channels/${id}`);
-    } catch (e) {
-      if (e.status !== 404) throw e;
-    }
-  }
+  for (const s of lobby.sessions || []) await deleteRoom(s.discord);
+  await deleteChannel(d.textId);
+  await deleteChannel(d.voiceId);
+  await deleteChannel(d.categoryId);
   d.deletedAt = new Date().toISOString();
 }
