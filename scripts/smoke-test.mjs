@@ -292,6 +292,30 @@ await test('lobbies saved with the old "approval" type read as Public + approval
   assert.equal((await db.lobbies.get(lobby.id)).visibility, 'public', 'saved in the new shape');
 });
 
+await test('optional end time, times rounded to 5 minutes', async () => {
+  const start = '2030-06-01T19:02:00.000Z';
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Timed', visibility: 'public', scheduledAt: start, endsAt: '2030-06-01T21:29:00.000Z' });
+  assert.equal(lobby.scheduledAt, '2030-06-01T19:00:00.000Z', 'start rounded to 5 minutes');
+  assert.equal(lobby.endsAt, '2030-06-01T21:30:00.000Z', 'end rounded to 5 minutes');
+  assert.equal((await host.call('POST', '/lobbies', { title: 'Backwards', scheduledAt: start, endsAt: '2030-06-01T18:00:00.000Z' })).status, 400);
+  assert.equal((await host.call('POST', '/lobbies', { title: 'No start', endsAt: start })).status, 400);
+  const none = (await host.call('POST', '/lobbies', { title: 'Open ended', scheduledAt: start })).lobby;
+  assert.equal(none.endsAt, null, 'end time is optional');
+
+  // repeating: every date lasts as long as the first, and can't run into the next one
+  const first = new Date(Date.now() + 3600e3);
+  first.setUTCMinutes(0, 0, 0);
+  const rep = (await host.call('POST', '/lobbies', {
+    title: 'Two hour show', scheduledAt: first.toISOString(), endsAt: new Date(+first + 2 * 3600e3).toISOString(), repeat: 'weekly', timeZone: 'UTC',
+  })).lobby;
+  assert.ok(rep.sessions.every((s) => Date.parse(s.endAt) - Date.parse(s.at) === 2 * 3600e3));
+  assert.equal(rep.next.endAt, rep.sessions[0].endAt);
+  const tooLong = await host.call('POST', '/lobbies', {
+    title: 'Too long', scheduledAt: first.toISOString(), endsAt: new Date(+first + 2 * 864e5).toISOString(), repeat: 'daily', timeZone: 'UTC',
+  });
+  assert.equal(tooLong.status, 400);
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);

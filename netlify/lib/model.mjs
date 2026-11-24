@@ -186,6 +186,19 @@ export const REPEATS = {
 };
 export const repeatKey = (r) => r ? Object.keys(REPEATS).find((k) => REPEATS[k].unit === r.unit && REPEATS[k].every === r.every) || null : null;
 
+/** Times are picked in 5-minute steps (like Google Calendar); anything else is rounded to the nearest 5. */
+export const snapTo5Min = (iso) => {
+  const ms = Date.parse(iso);
+  return isNaN(ms) ? null : new Date(Math.round(ms / 300e3) * 300e3).toISOString();
+};
+
+/** How long each date lasts, from the optional end time of the first date. 0 = no end time set. */
+export const lobbyDuration = (l) => (l.scheduledAt && l.endsAt ? Math.max(0, Date.parse(l.endsAt) - Date.parse(l.scheduledAt)) : 0);
+export const endOf = (l, startIso) => {
+  const d = lobbyDuration(l);
+  return d && startIso ? new Date(Date.parse(startIso) + d).toISOString() : null;
+};
+
 const UPCOMING = 6; // how many future dates are open for sign-up at once
 const SESSION_LENGTH_MS = 12 * 3600e3; // a date counts as over 12h after it starts
 export const isPast = (s, nowMs = Date.now()) => Date.parse(s.at) + SESSION_LENGTH_MS < nowMs;

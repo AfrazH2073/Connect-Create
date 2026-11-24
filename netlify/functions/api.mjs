@@ -8,7 +8,7 @@ import { isAdmin, reportLobbyFlags } from '../lib/reports.mjs';
 import {
   PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
-  repeatKey, validTimeZone, dateKey, syncSessionSchedule, nextSession, isPast,
+  repeatKey, validTimeZone, dateKey, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -476,10 +476,10 @@ function lobbySummary(l, people) {
   const next = l.recurrence ? nextSession(l) : null;
   return {
     id: l.id, title: l.title, game: l.game, place: l.place || '', description: l.description.slice(0, 220), categories: l.categories,
-    platforms: l.platforms, scheduledAt: l.scheduledAt, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
+    platforms: l.platforms, scheduledAt: l.scheduledAt, endsAt: l.endsAt || null, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
     status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
     recurrence: recurrenceView(l),
-    next: next ? { key: next.key, at: next.at, count: next.memberIds.length } : null,
+    next: next ? { key: next.key, at: next.at, endAt: endOf(l, next.at), count: next.memberIds.length } : null,
   };
 }
 
@@ -496,7 +496,7 @@ function sessionsView(l, uid, people, manager, member) {
       const room = s.discord || {};
       const links = (signedUp || manager) && room.textId && !room.deletedAt;
       return {
-        key: s.key, at: s.at, past: isPast(s, nowMs), skipped: s.status === 'skipped',
+        key: s.key, at: s.at, endAt: endOf(l, s.at), past: isPast(s, nowMs), skipped: s.status === 'skipped',
         count: s.memberIds.length, signedUp,
         members: s.memberIds.map((id) => miniUser(people[id])).filter(Boolean),
         discord: links ? { textUrl: guildChannelUrl(room.textId), voiceUrl: room.voiceId ? guildChannelUrl(room.voiceId) : null } : null,
@@ -550,10 +550,13 @@ function readLobbyFields(b, existing) {
   const visibility = legacyApproval ? 'public' : VISIBILITIES.includes(b.visibility) ? b.visibility : existing?.visibility || 'public';
   const approval = visibility !== 'code' && (legacyApproval || (b.approval !== undefined ? b.approval === true : !!existing?.approval));
   const maxSlots = Math.max(2, Math.min(100, parseInt(b.maxSlots, 10) || existing?.maxSlots || 4));
-  let scheduledAt = null;
-  if (b.scheduledAt) {
-    const d = new Date(b.scheduledAt);
-    if (!isNaN(d)) scheduledAt = d.toISOString();
+  const scheduledAt = b.scheduledAt ? snapTo5Min(b.scheduledAt) : null;
+  // Optional expected end time. For repeating lobbies it sets how long every date lasts.
+  const endsAt = b.endsAt ? snapTo5Min(b.endsAt) : null;
+  if (endsAt) {
+    if (!scheduledAt) fail(400, 'Pick a start time before an end time');
+    if (endsAt <= scheduledAt) fail(400, 'The end time has to be after the start time');
+    if (Date.parse(endsAt) - Date.parse(scheduledAt) > 30 * 864e5) fail(400, 'A lobby can last at most 30 days');
   }
   // Repeating: b.repeat is a key of REPEATS ('weekly', 'biweekly', ...) or 'none'.
   let recurrence = existing?.recurrence || null;
@@ -568,6 +571,8 @@ function readLobbyFields(b, existing) {
   if (recurrence) {
     if (!scheduledAt) fail(400, 'Pick the date and time of the first session for a repeating lobby');
     if (recurrence.until && recurrence.until < dateKey(scheduledAt, recurrence.timeZone)) fail(400, '"Repeat until" is before the first session');
+    const gapDays = recurrence.unit === 'day' ? recurrence.every : recurrence.unit === 'week' ? 7 * recurrence.every : 28;
+    if (endsAt && Date.parse(endsAt) - Date.parse(scheduledAt) > gapDays * 864e5) fail(400, 'Each date has to end before the next one starts');
   }
   return {
     title: str(b.title, 80, { required: true, name: 'Title' }),
@@ -577,6 +582,7 @@ function readLobbyFields(b, existing) {
     categories: pick(b.categories, CATEGORIES, 6),
     platforms: pick(b.platforms, LOBBY_PLATFORMS),
     scheduledAt,
+    endsAt,
     maxSlots,
     visibility,
     approval,

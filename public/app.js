@@ -45,11 +45,39 @@ function act(fn) {
 }
 
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-const toLocalInput = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const pad2 = (n) => String(n).padStart(2, '0');
+/** ISO time -> local { date: 'YYYY-MM-DD', time: 'HH:MM' }, rounded to 5 minutes. */
+const splitLocal = (iso) => {
+  if (!iso) return { date: '', time: '' };
+  const d = new Date(Math.round(Date.parse(iso) / 300e3) * 300e3);
+  return { date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`, time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}` };
+};
+const joinLocal = (date, time) => (date && time ? new Date(`${date}T${time}`).toISOString() : null);
+/** Every 5 minutes of the day, like Google Calendar's time list. */
+const TIME_CHOICES = Array.from({ length: 288 }, (_, i) => {
+  const v = `${pad2(Math.floor(i / 12))}:${pad2((i % 12) * 5)}`;
+  return [v, new Date(`2000-01-01T${v}`).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })];
+});
+const timeSelect = (id, name, selected, label) => `<select id="${id}" name="${name}" class="time-select" aria-label="${esc(label)}"><option value="">Time</option>${TIME_CHOICES.map(([v, t]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+/** A Google Calendar "add event" link. With no end time the event is an hour long. */
+function googleCalendarUrl(l, start, end, discordUrl) {
+  const stamp = (iso) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const finish = end || new Date(Date.parse(start) + 3600e3).toISOString();
+  const page = `${location.origin}/#/lobbies/${l.id}`;
+  const details = [l.game, `Create & Connect lobby: ${page}`, discordUrl ? `Discord chat: ${discordUrl}` : ''].filter(Boolean).join('\n');
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: l.title, dates: `${stamp(start)}/${stamp(finish)}`, details });
+  if (l.place) q.set('location', l.place);
+  return `https://calendar.google.com/calendar/render?${q}`;
+}
+const calendarBtn = (l, start, end, discordUrl, label = 'Add to Google Calendar') =>
+  `<a class="btn sm cal-btn" href="${esc(googleCalendarUrl(l, start, end, discordUrl))}" target="_blank" rel="noopener" title="Opens Google Calendar with this event filled in">📅 ${esc(label)}</a>`;
+
+/** "Sat, Dec 6, 7:00 PM – 9:00 PM", or with both dates when it ends on another day. */
+const fmtRange = (start, end) => {
+  if (!start) return '';
+  if (!end) return fmtDate(start);
+  const sameDay = new Date(start).toDateString() === new Date(end).toDateString();
+  return `${fmtDate(start)} – ${sameDay ? fmtTime(end) : fmtDate(end)}`;
 };
 
 const ICON = {
@@ -354,7 +382,7 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
     </section>
 
     <section class="about-block" id="how">
-      <div class="about-head"><span class="eyebrow">How it works</span><h2>From idea to recording in five steps</h2></div>
+      <div class="about-head"><span class="eyebrow">About</span><h2>From idea to recording in five steps</h2></div>
       <ol class="steps">
         ${step(1, 'Sign in with Discord', "There's no separate password. Your account is your Discord account, so the Discord name on every profile is really that person. If you aren't in the Create and Connect Discord server yet, the site can add you with one click.")}
         ${step(2, 'Set up your profile', 'Add a picture, a short bio, your pronouns, the kinds of content you make, and links to your YouTube, Twitch, TikTok, Instagram, X or Substack. Say what kind of collabs you\'re looking for so people can find you on the Creators page.')}
@@ -453,7 +481,7 @@ async function viewHome(params) {
       <span class="eyebrow">For streamers, YouTubers, podcasters and every kind of creator</span>
       <h1>Find your next <span>collab</span>.</h1>
       <p>Create &amp; Connect is where creators find each other, plan streams, videos and podcasts together, and get a private Discord chat for every collab, set up automatically.</p>
-      <div class="row" style="justify-content:center">${loginBtn('Sign up with Discord', 'lg')}<button type="button" class="btn lg" id="to-how">How it works ↓</button></div>
+      <div class="row" style="justify-content:center">${loginBtn('Sign up with Discord', 'lg')}<button type="button" class="btn lg" id="to-how">About ↓</button></div>
       <div class="hero-points"><span>🎮 Open a lobby in a minute</span><span>💬 Private Discord text &amp; voice</span><span>🔁 Repeating events</span><span>⭐ Reviews &amp; collab history</span></div>
     </section>
     ${aboutSections({ lobbiesPreview: `<section class="about-block">${lobbyList}</section>` })}`;
@@ -871,6 +899,8 @@ async function viewLobbyForm(id) {
   if (l && !l.me.isManager) { toast('Only hosts can edit this lobby', true); location.hash = `#/lobbies/${id}`; return; }
   const v = l?.visibility || 'public';
   const rep0 = l?.recurrence?.repeat || 'none';
+  const start0 = splitLocal(l?.scheduledAt);
+  const end0 = splitLocal(l?.endsAt);
   // A repeating lobby can't go back to one-time (its dates have sign-ups and channels).
   const repeatChoices = Object.entries(REPEAT).filter(([k]) => !(l?.recurrence && k === 'none'));
   $app.innerHTML = `
@@ -881,8 +911,11 @@ async function viewLobbyForm(id) {
         <div class="field"><label for="g">Game / activity <span class="hint">(optional)</span></label><input type="text" id="g" name="game" maxlength="80" placeholder="Mario Party Superstars" value="${esc(l?.game)}" /></div>
         <div class="field"><label for="pl">Where <span class="hint">(optional, a general area, not an address)</span></label><input type="text" id="pl" name="place" maxlength="60" list="place-ideas" placeholder="Online, San Diego, CA…" value="${esc(l?.place)}" /><datalist id="place-ideas"><option value="Online"></option></datalist></div>
         <div class="repeat-box">
-          <div class="grid-3">
-            <div class="field"><label for="w"><span id="w-label">When</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><input type="datetime-local" id="w" name="scheduledAt" value="${esc(toLocalInput(l?.scheduledAt))}" /></div>
+          <div class="grid-2">
+            <div class="field"><label for="w"><span id="w-label">Starts</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><div class="dt-pair"><input type="date" id="w" name="startDate" value="${esc(start0.date)}" />${timeSelect('wt', 'startTime', start0.time, 'Start time')}</div></div>
+            <div class="field"><label for="e"><span id="e-label">Expected end</span> <span class="hint">(optional)</span></label><div class="dt-pair"><input type="date" id="e" name="endDate" value="${esc(end0.date)}" />${timeSelect('et', 'endTime', end0.time, 'End time')}</div></div>
+          </div>
+          <div class="grid-2">
             <div class="field"><label for="rp">Repeats</label><select id="rp" name="repeat">${repeatChoices.map(([k, label]) => `<option value="${k}" ${rep0 === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
             <div class="field" id="until-field"><label for="ru">Until <span class="hint">(optional)</span></label><input type="date" id="ru" name="repeatUntil" value="${esc(l?.recurrence?.until || '')}" /></div>
           </div>
@@ -919,35 +952,45 @@ async function viewLobbyForm(id) {
   };
   form.addEventListener('change', updateHint); updateHint();
 
-  const whenInput = form.scheduledAt;
+  const startAt = () => joinLocal(form.startDate.value, form.startTime.value);
+  // Picking an end time with no end date means "same day as the start".
+  form.endTime.addEventListener('change', () => { if (form.endTime.value && !form.endDate.value) form.endDate.value = form.startDate.value; });
   const updateRepeat = () => {
     const r = form.repeat.value;
     const repeating = r !== 'none';
     document.getElementById('until-field').hidden = !repeating;
-    whenInput.required = repeating;
-    document.getElementById('w-label').textContent = repeating ? 'First date' : 'When';
+    form.startDate.required = form.startTime.required = repeating;
+    document.getElementById('w-label').textContent = repeating ? 'First date' : 'Starts';
+    document.getElementById('e-label').textContent = repeating ? 'Ends' : 'Expected end';
     document.getElementById('w-hint').textContent = repeating ? '(your local time)' : '(optional, your local time)';
     document.getElementById('slots-label').textContent = repeating ? 'Slots per date' : 'Total slots';
-    const at = whenInput.value ? new Date(whenInput.value).toISOString() : null;
+    const at = startAt();
     const pattern = !at ? '' : r === 'daily' ? `Every day at ${fmtTime(at)}.`
       : r === 'monthly' ? `Every month on day ${new Date(at).getDate()} at ${fmtTime(at)}.`
       : `${REPEAT[r]} on ${fmtDay(at)} at ${fmtTime(at)}.`;
     document.getElementById('repeat-hint').textContent = repeating
-      ? `${pattern} People sign up for the dates they can make. Each date gets its own Discord text + voice channel, named with the date, once 2+ people sign up.`
+      ? `${pattern}${form.endTime.value ? ' Every date lasts as long as the first one.' : ''} People sign up for the dates they can make. Each date gets its own Discord text + voice channel, named with the date, once 2+ people sign up.`
       : '';
   };
   form.repeat.addEventListener('change', updateRepeat);
-  whenInput.addEventListener('input', updateRepeat);
+  for (const el of [form.startDate, form.startTime, form.endTime]) el.addEventListener('change', updateRepeat);
   updateRepeat();
   const cohostPicker = form.querySelector('#cohosts') ? userPicker(form.querySelector('#cohosts'), { initial: l?.coHosts || [], exclude: [state.me.id] }) : null;
   const invitePicker = form.querySelector('#invites') ? userPicker(form.querySelector('#invites'), { exclude: [state.me.id] }) : null;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const when = fd.get('scheduledAt');
+    const { startDate, startTime, endDate, endTime } = Object.fromEntries(fd);
+    if (startDate && !startTime) return toast('Pick a start time', true);
+    if (startTime && !startDate) return toast('Pick a start date', true);
+    if (endDate && !endTime) return toast('Pick an end time, or clear the end date', true);
+    const scheduledAt = joinLocal(startDate, startTime);
+    const endsAt = endTime ? joinLocal(endDate || startDate, endTime) : null;
+    if (endsAt && !scheduledAt) return toast('Pick a start date and time first', true);
+    if (endsAt && endsAt <= scheduledAt) return toast('The end has to be after the start', true);
     const payload = {
       title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
-      visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt: when ? new Date(when).toISOString() : null,
+      visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt, endsAt,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
       repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -989,7 +1032,10 @@ async function viewLobby(id) {
     if (me.isMember && l.recurrence) return me.isHost
       ? `<div class="notice ok">You're hosting this lobby.</div><p class="hint" style="margin:10px 0 0">You're signed up for every date. Withdraw from any you'll miss, or skip a date for everyone.</p>`
       : `<div class="notice ok">You're in! 🎉</div><p class="hint" style="margin:10px 0 0">Sign up for the dates you can make below.</p><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
-    if (me.isMember) return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>` : `<div class="notice ok">You're in! 🎉</div><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
+    if (me.isMember) {
+      const cal = l.scheduledAt && open ? `<div style="margin-top:12px">${calendarBtn(l, l.scheduledAt, l.endsAt, l.discord?.textUrl)}</div>` : '';
+      return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>${cal}` : `<div class="notice ok">You're in! 🎉</div>${cal}<button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
+    }
     if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><button class="btn ghost sm" id="leave" style="margin-top:12px">Cancel request</button>`;
     if (full && !l.recurrence) return `<div class="notice">This lobby is full.</div>`;
     if (l.approval && !me.isManager) return `${me.invited ? '<div class="notice ok">You were invited!</div>' : ''}<p class="muted"${me.invited ? ' style="margin-top:12px"' : ''}>A host approves who gets ${l.recurrence ? 'in' : 'a slot'}.${l.recurrence ? ' Once you\'re approved, you can pick your dates.' : ''}</p><div class="row"><button class="btn primary" id="join">Request to join</button>${me.invited ? '<button class="btn ghost sm" id="decline">Decline</button>' : ''}</div>`;
@@ -1039,12 +1085,12 @@ async function viewLobby(id) {
       let action = '';
       if (s.skipped) action = `<span class="tag completed">Skipped</span>${me.isManager && !s.past ? `<button class="btn ghost sm" data-unskip="${esc(s.key)}">Restore</button>` : ''}`;
       else if (s.past) action = '<span class="tag completed">Done</span>';
-      else if (s.signedUp) action = `<span class="going">✓ Going</span><button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
+      else if (s.signedUp) action = `<span class="going">✓ Going</span>${calendarBtn(l, s.at, s.endAt, s.discord?.textUrl, 'Calendar')}<button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
       else if (canPick) action = fullDate ? '<span class="dim">Full</span>' : `<button class="btn primary sm" data-signup="${esc(s.key)}">Sign up</button>`;
       const skip = me.isManager && !s.skipped && !s.past ? `<button class="btn ghost sm" data-skip="${esc(s.key)}" title="Cancel this date for everyone">Skip date</button>` : '';
       const links = s.discord ? `<div class="row" style="gap:6px"><a class="btn discord sm" href="${esc(s.discord.textUrl)}" target="_blank" rel="noopener"># Chat</a>${s.discord.voiceUrl ? `<a class="btn discord sm" href="${esc(s.discord.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a>` : ''}</div>` : '';
       return `<div class="date-row${s.skipped || s.past ? ' muted-row' : ''}">
-        <div class="date-when"><strong>${esc(new Date(s.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</strong><span class="dim">${esc(fmtTime(s.at))}</span></div>
+        <div class="date-when"><strong>${esc(new Date(s.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</strong><span class="dim">${esc(fmtTime(s.at))}${s.endAt ? ` – ${esc(fmtTime(s.endAt))}` : ''}</span></div>
         <div class="date-who">
           <div class="avatars">${s.members.slice(0, 6).map((u) => `<a href="#/u/${esc(u.id)}" title="${esc(u.displayName)}">${avatar(u, 26)}</a>`).join('')}${s.members.length > 6 ? `<span class="dim">+${s.members.length - 6}</span>` : ''}</div>
           <span class="dim" style="font-size:.85rem">${s.count}/${l.maxSlots} going</span>
@@ -1131,8 +1177,8 @@ async function viewLobby(id) {
             ${l.game ? `<div style="color:var(--accent-2);font-weight:600;margin-top:14px">${esc(l.game)}</div>` : ''}
             <h1 class="lobby-title">${esc(l.title)}</h1>
             <div class="meta-row">${l.place ? `<span>📍 ${esc(l.place)}</span>` : ''}${l.recurrence
-              ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtDate(l.next.at))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
-              : `<span>🗓 ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
+              ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtRange(l.next.at, l.next.endAt))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
+              : `<span>🗓 ${l.scheduledAt ? esc(fmtRange(l.scheduledAt, l.endsAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>
             ${l.description ? `<p class="desc-text" style="margin-top:18px">${esc(l.description)}</p>` : ''}
           </div>
