@@ -378,6 +378,30 @@ await test('repeating lobby: host picks how many dates are open (1-9, default 6)
   assert.equal(grown.sessions.length, 8);
 });
 
+await test('repeating lobbies from before: dates move out of the shared category into their own', async () => {
+  const first = new Date(Date.now() + 2 * 864e5).toISOString();
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Legacy Series', visibility: 'public', scheduledAt: first, repeat: 'weekly', timeZone: 'UTC' });
+  const key = lobby.sessions[0].key;
+  // the old layout: one category for the lobby, every date's channels inside it
+  const stored = await db.lobbies.get(lobby.id);
+  channels.set('710000000000000001', { name: 'Legacy Series', type: 4, overwrites: new Map() });
+  channels.set('710000000000000002', { name: `${key}-legacy-series`, type: 0, parent_id: '710000000000000001', overwrites: new Map([[host.id, '1']]) });
+  channels.set('710000000000000003', { name: `🔊 ${key} Legacy Series`, type: 2, parent_id: '710000000000000001', overwrites: new Map([[host.id, '1']]) });
+  stored.discord = { categoryId: '710000000000000001', categoryMemberIds: [host.id] };
+  stored.sessions[0].discord = { textId: '710000000000000002', voiceId: '710000000000000003', parentId: '710000000000000001', memberIds: [host.id] };
+  await db.lobbies.put(stored);
+
+  await runCleanup();
+  const after = await db.lobbies.get(lobby.id);
+  const room = after.sessions[0].discord;
+  assert.ok(room.categoryId && room.categoryId !== '710000000000000001');
+  assert.equal(channels.get(room.categoryId).name, `${key} Legacy Series`);
+  assert.equal(channels.get('710000000000000002').parent_id, room.categoryId);
+  assert.equal(channels.get('710000000000000003').parent_id, room.categoryId);
+  assert.ok(!channels.has('710000000000000001'), 'old shared category deleted');
+  assert.equal(after.discord.categoryId, null);
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);
@@ -474,7 +498,7 @@ await test('profile: new platforms, pronouns, banner, and an uploaded picture', 
   assert.equal(back.user.hasCustomAvatar, false, 'can go back to the Discord picture');
 });
 
-await test('repeating lobby: per-date sign-ups, dated Discord channels in one category', async () => {
+await test('repeating lobby: per-date sign-ups, dated Discord channels, each date in its own category', async () => {
   const first = new Date(Date.now() + 2 * 864e5); // 2 days from now
   const { lobby } = await host.call('POST', '/lobbies', {
     title: 'Smash Bros', visibility: 'public', maxSlots: 3, scheduledAt: first.toISOString(), repeat: 'biweekly', timeZone: 'America/New_York',
@@ -495,7 +519,7 @@ await test('repeating lobby: per-date sign-ups, dated Discord channels in one ca
   const text = made.find((c) => c.type === 0);
   const voice = made.find((c) => c.type === 2);
   assert.equal(made.length, 3);
-  assert.equal(cat.name, 'Smash Bros');
+  assert.equal(cat.name, `${d1.key} Smash Bros`, 'the category starts with the date too');
   assert.equal(text.name, `${d1.key}-smash-bros`, 'text channel starts with the date');
   assert.ok(voice.name.includes(d1.key));
   assert.equal(text.parent_id, cat.id);
@@ -517,7 +541,14 @@ await test('repeating lobby: per-date sign-ups, dated Discord channels in one ca
   const sk = await host.call('POST', `/lobbies/${lobby.id}/skip/${d1.key}`);
   assert.equal(sk.lobby.sessions.find((s) => s.key === d1.key).skipped, true);
   assert.ok(!channels.has(text.id), 'skipped date channels deleted');
-  assert.ok(channels.has(cat.id), 'category stays for the other dates');
+  assert.ok(!channels.has(cat.id), "and that date's category");
+  // date 2 gets a separate category once 2 people are on it
+  await bob.call('POST', `/lobbies/${lobby.id}/signup/${d2.key}`);
+  const d2room = (await db.lobbies.get(lobby.id)).sessions.find((s) => s.key === d2.key).discord;
+  assert.equal(channels.get(d2room.categoryId).name, `${d2.key} Smash Bros`);
+  assert.equal(channels.get(d2room.textId).parent_id, d2room.categoryId);
+  assert.notEqual(d2room.categoryId, cat.id);
+  assert.equal((await db.lobbies.get(lobby.id)).discord.categoryId ?? null, null, 'no shared category for the whole lobby');
   assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`)).status, 400, 'cannot sign up for a skipped date');
 
   // leaving the lobby takes you off every date

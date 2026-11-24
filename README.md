@@ -24,8 +24,8 @@ Everything runs on free tiers: **Netlify** (hosting, serverless functions, sched
 - Co-hosts, invites, kick, slot limits, scheduled time, and mark completed or reopen.
 - **Times.** Start and an optional expected end, picked in 5-minute steps like Google Calendar. Anyone in a lobby (or signed up for a date) gets an **Add to Google Calendar** button with the time, place and lobby link filled in. For repeating lobbies it's a private **calendar feed** instead: add it once, and every date you sign up for later shows up in your calendar by itself (dates you drop are removed). Google Calendar refreshes feeds a few times a day, so new dates can take a few hours. Feed links are signed with `SESSION_SECRET`, so changing that secret breaks existing feed links.
 - **Repeating lobbies.** Pick a first date and a repeat (every day, every 1–4 weeks, or every month, optionally until a date). The next 6 dates are open by default (the host can pick 1–9), and people sign up for just the dates they can make. Slots are per date. Hosts can skip a single date (or restore it). Times stay the same local time across daylight-saving changes.
-- **Discord automation.** Every lobby gets its **own category** in the server. At 2+ members the bot creates a hidden text channel and a voice channel in it that only lobby members can see. For repeating lobbies, each date gets its own pair once 2+ people sign up for that date, and the names start with the date, e.g. `2026-12-07-smash-bros`. Access updates when people join, leave, sign up, withdraw, or get removed.
-- **Cleanup.** A scheduled function runs every hour. It deletes a lobby's channels and category **14 days after the lobby is marked completed**, and each repeating date's channels 14 days after that date (right away if the host skipped it). If a lobby is cancelled, everything is deleted right away.
+- **Discord automation.** Every lobby gets its **own category** in the server. At 2+ members the bot creates a hidden text channel and a voice channel in it that only lobby members can see. For repeating lobbies, **each date gets its own category** and pair of channels once 2+ people sign up for that date, all named starting with the date, e.g. category `2026-12-07 Smash Bros` with `#2026-12-07-smash-bros` inside. Repeating lobbies made before this used one category for all dates; the hourly cleanup moves those into per-date categories and deletes the old one. Access updates when people join, leave, sign up, withdraw, or get removed.
+- **Cleanup.** A scheduled function runs every hour. It deletes a lobby's channels and category **14 days after the lobby is marked completed**, and each repeating date's channels and category 14 days after that date (right away if the host skipped it). If a lobby is cancelled, everything is deleted right away.
 - Inbox for join requests, invites, friend requests, and collab tags. There is also a friends list.
 
 ## Project layout
@@ -57,7 +57,7 @@ netlify.toml            build and redirect config (Netlify reads it automaticall
    - If you'd rather not use Administrator, the minimum is: Manage Channels, Manage Roles, Create Instant Invite, View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Add Reactions, Connect, Speak, Video, Use Voice Activity.
 5. Server ID: in Discord go to **User Settings → Advanced** and turn on **Developer Mode**. Then right-click the server icon and choose **Copy Server ID**. This is `DISCORD_GUILD_ID`.
 
-The bot creates a new category for every lobby, so you don't need to make one. (`DISCORD_CATEGORY_ID` from older versions is no longer used and can be deleted.)
+The bot creates a new category for every lobby (and every date of a repeating lobby), so you don't need to make one. (`DISCORD_CATEGORY_ID` from older versions is no longer used and can be deleted.)
 
 ### 2. Netlify
 

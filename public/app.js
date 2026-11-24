@@ -387,7 +387,7 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
         ${step(1, 'Sign in with Discord', "There's no separate password. Your account is your Discord account, so the Discord name on every profile is really that person. If you aren't in the Create and Connect Discord server yet, the site can add you with one click.")}
         ${step(2, 'Set up your profile', 'Add a picture, a short bio, your pronouns, the kinds of content you make, and links to your YouTube, Twitch, TikTok, Instagram, X or Substack. Say what kind of collabs you\'re looking for so people can find you on the Creators page.')}
         ${step(3, 'Open or join a lobby', 'A lobby is one collab: a title, the game or activity, roughly where it happens (Online, or a city), when, how many people, and what it\'ll be posted on. Make your own, or browse and search everyone else\'s.')}
-        ${step(4, 'Talk it through on Discord', 'Once 2 or more people are in a lobby, a private text and voice channel opens for it in the Create and Connect server, in its own category. Only lobby members can see it. People are added and removed automatically as they join and leave.')}
+        ${step(4, 'Talk it through on Discord', 'Once 2 or more people are in a lobby, a private text and voice channel opens for it in the Create and Connect server, in its own category (for repeating lobbies, one per date). Only lobby members can see it. People are added and removed automatically as they join and leave.')}
         ${step(5, 'Make it, then wrap it up', 'When you\'re done, the host marks the lobby completed. Everyone can ask each other for reviews, show the collab on their profile, and it goes into their collab history. The Discord channels are cleaned up two weeks later.')}
       </ol>
     </section>
@@ -411,15 +411,16 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
           <span class="eyebrow">Repeating lobbies</span>
           <h2>Run a regular thing without re-posting it</h2>
           <p>Doing something every week, every other Sunday, or once a month? Make the lobby repeat. The next six dates are open by default (you can pick anywhere from 1 to 9), and people sign up for just the dates they can make, so each date has its own list and its own slots.</p>
-          <p>Each date also gets its own Discord channels, named with the date so they're easy to tell apart. Can't make one week? Skip that date for everyone, and restore it if plans change.</p>
+          <p>Each date also gets its own Discord category and channels, named with the date so they're easy to tell apart. Can't make one week? Skip that date for everyone, and restore it if plans change.</p>
         </div>
         <div class="card discord-mock" aria-label="Example of a lobby's Discord category">
-          <div class="dm-cat">⌄ SMASH SUNDAYS</div>
+          <div class="dm-cat">⌄ 2026-12-06 SMASH SUNDAYS</div>
           <div class="dm-ch"># 2026-12-06-smash-sundays</div>
           <div class="dm-ch">🔊 2026-12-06 Smash Sundays</div>
+          <div class="dm-cat" style="margin-top:12px">⌄ 2026-12-20 SMASH SUNDAYS</div>
           <div class="dm-ch"># 2026-12-20-smash-sundays</div>
           <div class="dm-ch">🔊 2026-12-20 Smash Sundays</div>
-          <p class="hint" style="margin:12px 0 0">Every lobby gets its own category. Only the people signed up for a date can see that date's channels.</p>
+          <p class="hint" style="margin:12px 0 0">Each date gets its own category, named with the date. Only the people signed up for a date can see it.</p>
         </div>
       </div>
     </section>
@@ -1095,7 +1096,7 @@ async function viewLobby(id) {
       <div class="row"><a class="btn discord" href="${esc(dc.textUrl)}" target="_blank" rel="noopener"># Text chat</a><a class="btn discord" href="${esc(dc.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a></div>
       ${l.status === 'completed' ? '<p class="hint" style="margin:10px 0 0">Channels are deleted 14 days after the lobby was completed.</p>' : ''}
       ${dc.missingAccess.length ? `<p class="hint" style="margin:10px 0 0">⚠️ Couldn't add ${dc.missingAccess.map((u) => esc(u.displayName)).join(', ')} — they need to join the Discord server (log out &amp; back in here).</p>` : ''}`;
-    else if (l.recurrence) inner = `<p class="muted" style="margin:0">This lobby has its own category in the Create and Connect server. Each date gets a private text + voice channel named with the date (like <code>${esc(l.sessions?.[0]?.key || '2026-12-07')}-${esc(slugify(l.title))}</code>) once 2 or more people sign up for it. Links show up next to your dates.</p>`;
+    else if (l.recurrence) inner = `<p class="muted" style="margin:0">Each date gets its own category in the Create and Connect server, with a private text + voice channel named with the date (like <code>${esc(l.sessions?.[0]?.key || '2026-12-07')}-${esc(slugify(l.title))}</code>) once 2 or more people sign up for it. Links show up next to your dates.</p>`;
     else inner = '<p class="muted" style="margin:0">A private text + voice channel opens automatically once 2 or more people are in the lobby.</p>';
     const err = dc.error ? `<div class="notice warn" style="margin-top:12px">${esc(dc.error)}</div>${me.isManager ? '<button class="btn sm" id="sync-discord" style="margin-top:10px">↻ Retry Discord setup</button>' : ''}` : '';
     return `<div class="card discord-panel"><h2 class="row" style="gap:8px">${ICON.discord} Discord</h2>${inner}${err}</div>`;

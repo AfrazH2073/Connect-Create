@@ -201,34 +201,39 @@ async function syncAccess(channelIds, want, haveList) {
   return { have: [...have], failed };
 }
 
-async function ensureCategory(lobby, d) {
-  if (!d.categoryId) {
+/**
+ * Create (once) the category a room lives in, and keep its member access in sync.
+ * One-time lobbies have one category; each date of a repeating lobby has its own.
+ */
+async function ensureCategory(room, name, memberIds) {
+  if (!room.categoryId) {
     const cat = await bot('POST', `/guilds/${process.env.DISCORD_GUILD_ID}/channels`, {
-      name: String(lobby.title).slice(0, 100), type: 4, permission_overwrites: hidden(),
+      name: String(name).slice(0, 100), type: 4, permission_overwrites: hidden(),
     });
-    d.categoryId = cat.id;
-    d.categoryMemberIds = [];
+    room.categoryId = cat.id;
+    room.categoryMemberIds = [];
   }
   // Members can see the category header too (their own channels inside are what matter).
-  const { have } = await syncAccess([d.categoryId], lobby.memberIds, d.categoryMemberIds);
-  d.categoryMemberIds = have;
-  return d.categoryId;
+  const { have } = await syncAccess([room.categoryId], memberIds, room.categoryMemberIds);
+  room.categoryMemberIds = have;
+  return room.categoryId;
 }
 
+/** A repeating lobby's dates each get a category named like their channels: "2026-12-06 Smash Sundays". */
+const dateCategoryName = (lobby, s) => `${s.key} ${lobby.title}`;
+
 /**
- * Channels made before each lobby had its own category (e.g. under a shared "Lobbies"
- * category): create the lobby's category and move them into it. If someone deleted a
- * channel by hand in Discord, forget it so it gets made again.
+ * Channels sitting in the wrong category get moved: one-time lobbies' older channels
+ * (e.g. under a shared "Lobbies" category) go into the lobby's own category, and each
+ * date of a repeating lobby goes into its own dated category. The old category a
+ * repeating lobby used for all its dates is deleted once it's empty. If someone deleted
+ * a channel by hand in Discord, forget it so it gets made again.
  */
 export async function moveIntoOwnCategory(lobby) {
   const d = lobby.discord;
   if (!d || d.deletedAt || !discordConfigured()) return false;
-  const rooms = lobby.recurrence ? (lobby.sessions || []).map((s) => s.discord).filter(Boolean) : [d];
   const ids = (room) => ['textId', 'voiceId'].filter((k) => room[k] && !room.deletedAt);
-  const stray = rooms.filter((room) => ids(room).length && (!d.categoryId || room.parentId !== d.categoryId));
-  if (!stray.length) return false;
-  const parentId = await ensureCategory(lobby, d);
-  for (const room of stray) {
+  const move = async (room, parentId) => {
     for (const k of ids(room)) {
       try {
         // lock_permissions false keeps the members-only access on the channel.
@@ -240,7 +245,25 @@ export async function moveIntoOwnCategory(lobby) {
       }
     }
     room.parentId = parentId;
+  };
+  let moved = false;
+  if (lobby.recurrence) {
+    for (const s of lobby.sessions || []) {
+      const room = s.discord;
+      if (!room || room.deletedAt || !ids(room).length || (room.categoryId && room.parentId === room.categoryId)) continue;
+      await move(room, await ensureCategory(room, dateCategoryName(lobby, s), s.memberIds));
+      moved = true;
+    }
+    if (d.categoryId) {
+      await deleteChannel(d.categoryId);
+      d.categoryId = null;
+      d.categoryMemberIds = [];
+      moved = true;
+    }
+    return moved;
   }
+  if (!ids(d).length || (d.categoryId && d.parentId === d.categoryId)) return false;
+  await move(d, await ensureCategory(d, lobby.title, lobby.memberIds));
   return true;
 }
 
@@ -304,13 +327,12 @@ export async function syncLobbyChannels(lobby, siteUrl) {
   try {
     if (lobby.recurrence) {
       const sessions = activeSessions(lobby);
-      if (!sessions.length && !d.categoryId) { d.error = null; return d; }
-      const parentId = await ensureCategory(lobby, d);
-      await moveIntoOwnCategory(lobby);
+      await moveIntoOwnCategory(lobby); // dates from before each one had its own category
       const failed = new Set();
       for (const s of sessions) {
         s.discord ||= {};
         const when = sessionLabel(lobby, s);
+        const parentId = await ensureCategory(s.discord, dateCategoryName(lobby, s), s.memberIds);
         await syncRoom(s.discord, {
           name: `${s.key}-${slug}`.slice(0, 100),
           voiceName: `🔊 ${s.key} ${lobby.title}`,
@@ -327,7 +349,7 @@ export async function syncLobbyChannels(lobby, siteUrl) {
         d.error = null; // nothing to do yet; channels open once a 2nd person joins
         return d;
       }
-      const parentId = await ensureCategory(lobby, d);
+      const parentId = await ensureCategory(d, lobby.title, lobby.memberIds);
       await moveIntoOwnCategory(lobby); // older channels sitting in another category
       await syncRoom(d, {
         name: slug,
@@ -391,10 +413,11 @@ export async function postToLobby(lobby, content) {
 
 /** Delete one date's (or a one-time lobby's) text + voice channels. */
 export async function deleteRoom(room) {
-  if (!room || room.deletedAt || !room.textId && !room.voiceId) return;
+  if (!room || room.deletedAt || !room.textId && !room.voiceId && !room.categoryId) return;
   if (!discordConfigured()) return;
   await deleteChannel(room.textId);
   await deleteChannel(room.voiceId);
+  await deleteChannel(room.categoryId); // a repeating lobby's date has its own category
   room.deletedAt = new Date().toISOString();
 }
 
