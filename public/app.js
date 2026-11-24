@@ -317,7 +317,7 @@ function creatorCard(u) {
   </a>`;
 }
 
-// ---------- home + "how it works" ----------
+// ---------- home + about ----------
 
 const step = (n, title, body) => `<li class="step"><span class="step-n">${n}</span><div><h3>${title}</h3><p>${body}</p></div></li>`;
 const tile = (icon, title, body) => `<div class="card tile"><div class="feat-icon">${icon}</div><h3>${title}</h3><p>${body}</p></div>`;
@@ -443,7 +443,7 @@ async function viewHome(params) {
     ${top.length ? `<div class="cards">${top.map(lobbyCard).join('')}</div>` : `<div class="empty">No open lobbies yet. ${state.me ? '<a href="#/lobbies/new">Start the first one!</a>' : 'Log in and start the first one!'}</div>`}`;
   if (state.me) {
     $app.innerHTML = `
-      <div class="page-head"><div><h1>Hey ${esc(state.me.displayName)} 👋</h1><p>Here's what's open right now. New here? <a href="#/about">See how it works</a>.</p></div>
+      <div class="page-head"><div><h1>Hey ${esc(state.me.displayName)} 👋</h1><p>Here's what's open right now. New here? <a href="#/about">Read about the site</a>.</p></div>
       <div class="row"><a class="btn" href="#/creators">Find creators</a><a class="btn primary" href="#/lobbies/new">Create a lobby</a></div></div>
       <section class="section">${lobbyList}</section>`;
     return;
@@ -464,7 +464,7 @@ async function viewHome(params) {
 async function viewAbout() {
   $app.innerHTML = `
     <section class="hero hero-sm">
-      <span class="eyebrow">How it works</span>
+      <span class="eyebrow">About</span>
       <h1>What <span>Create &amp; Connect</span> is for</h1>
       <p>A place for creators to find collaborators, plan things together, and get a private Discord space for every collab.</p>
     </section>
