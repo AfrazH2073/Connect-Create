@@ -9,7 +9,7 @@ import { isAdmin, reportLobbyFlags } from '../lib/reports.mjs';
 import {
   PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
-  repeatKey, validTimeZone, dateKey, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
+  repeatKey, validTimeZone, dateKey, aheadOf, DEFAULT_AHEAD, MAX_AHEAD, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -470,7 +470,7 @@ async function clipAction(ctx, id, action) {
 
 function recurrenceView(l) {
   if (!l.recurrence) return null;
-  return { repeat: repeatKey(l.recurrence), until: l.recurrence.until || null, timeZone: l.recurrence.timeZone };
+  return { repeat: repeatKey(l.recurrence), until: l.recurrence.until || null, timeZone: l.recurrence.timeZone, ahead: aheadOf(l) };
 }
 
 function lobbySummary(l, people) {
@@ -570,6 +570,8 @@ function readLobbyFields(b, existing) {
       ...rule,
       timeZone: validTimeZone(b.timeZone || existing?.recurrence?.timeZone),
       until: /^\d{4}-\d{2}-\d{2}$/.test(b.repeatUntil || '') ? b.repeatUntil : null,
+      // how many dates are open for sign-up at once (1-9)
+      ahead: Math.max(1, Math.min(MAX_AHEAD, parseInt(b.repeatAhead, 10) || existing?.recurrence?.ahead || DEFAULT_AHEAD)),
     } : null;
   }
   if (recurrence) {

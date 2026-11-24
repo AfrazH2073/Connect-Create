@@ -357,6 +357,27 @@ await test('calendar feed: only your dates, follows later sign-ups, private link
   assert.equal((await feed(alice.id, sig)).status, 404, "one person's link doesn't open another's");
 });
 
+await test('repeating lobby: host picks how many dates are open (1-9, default 6)', async () => {
+  const first = new Date(Date.now() + 3600e3).toISOString();
+  const base = { visibility: 'public', scheduledAt: first, repeat: 'weekly', timeZone: 'UTC' };
+  const def = (await host.call('POST', '/lobbies', { ...base, title: 'Default' })).lobby;
+  assert.equal(def.sessions.length, 6);
+  assert.equal(def.recurrence.ahead, 6);
+  const three = (await host.call('POST', '/lobbies', { ...base, title: 'Three', repeatAhead: 3 })).lobby;
+  assert.equal(three.sessions.length, 3);
+  assert.equal((await host.call('POST', '/lobbies', { ...base, title: 'Lots', repeatAhead: 20 })).lobby.sessions.length, 9, 'capped at 9');
+  assert.equal((await host.call('POST', '/lobbies', { ...base, title: 'One', repeatAhead: 1 })).lobby.sessions.length, 1);
+
+  // lowering it closes empty dates but keeps ones people signed up for
+  const six = (await host.call('POST', '/lobbies', { ...base, title: 'Shrink' })).lobby;
+  await bob.call('POST', `/lobbies/${six.id}/signup/${six.sessions[4].key}`);
+  const shrunk = (await host.call('PUT', `/lobbies/${six.id}`, { ...base, title: 'Shrink', repeatAhead: 2 })).lobby;
+  assert.deepEqual(shrunk.sessions.map((s) => s.key), [six.sessions[0].key, six.sessions[1].key, six.sessions[4].key]);
+  // raising it opens more
+  const grown = (await host.call('PUT', `/lobbies/${six.id}`, { ...base, title: 'Shrink', repeatAhead: 8 })).lobby;
+  assert.equal(grown.sessions.length, 8);
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);

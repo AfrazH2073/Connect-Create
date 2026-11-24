@@ -410,7 +410,7 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
         <div>
           <span class="eyebrow">Repeating lobbies</span>
           <h2>Run a regular thing without re-posting it</h2>
-          <p>Doing something every week, every other Sunday, or once a month? Make the lobby repeat. The next six dates are always open, and people sign up for just the dates they can make, so each date has its own list and its own slots.</p>
+          <p>Doing something every week, every other Sunday, or once a month? Make the lobby repeat. The next six dates are open by default (you can pick anywhere from 1 to 9), and people sign up for just the dates they can make, so each date has its own list and its own slots.</p>
           <p>Each date also gets its own Discord channels, named with the date so they're easy to tell apart. Can't make one week? Skip that date for everyone, and restore it if plans change.</p>
         </div>
         <div class="card discord-mock" aria-label="Example of a lobby's Discord category">
@@ -915,8 +915,9 @@ async function viewLobbyForm(id) {
             <div class="field"><label for="w"><span id="w-label">Starts</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><div class="dt-pair"><input type="date" id="w" name="startDate" value="${esc(start0.date)}" />${timeSelect('wt', 'startTime', start0.time, 'Start time')}</div></div>
             <div class="field"><label for="e"><span id="e-label">Expected end</span> <span class="hint">(optional)</span></label><div class="dt-pair"><input type="date" id="e" name="endDate" value="${esc(end0.date)}" />${timeSelect('et', 'endTime', end0.time, 'End time')}</div></div>
           </div>
-          <div class="grid-2">
+          <div class="grid-3">
             <div class="field"><label for="rp">Repeats</label><select id="rp" name="repeat">${repeatChoices.map(([k, label]) => `<option value="${k}" ${rep0 === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+            <div class="field" id="ahead-field"><label for="ra">Dates open at once</label><select id="ra" name="repeatAhead">${Array.from({ length: 9 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${(l?.recurrence?.ahead || 6) === n ? 'selected' : ''}>${n === 1 ? '1 (just the next date)' : `${n} dates`}</option>`).join('')}</select></div>
             <div class="field" id="until-field"><label for="ru">Until <span class="hint">(optional)</span></label><input type="date" id="ru" name="repeatUntil" value="${esc(l?.recurrence?.until || '')}" /></div>
           </div>
           <p class="hint" id="repeat-hint" style="margin:0"></p>
@@ -959,6 +960,7 @@ async function viewLobbyForm(id) {
     const r = form.repeat.value;
     const repeating = r !== 'none';
     document.getElementById('until-field').hidden = !repeating;
+    document.getElementById('ahead-field').hidden = !repeating;
     form.startDate.required = form.startTime.required = repeating;
     document.getElementById('w-label').textContent = repeating ? 'First date' : 'Starts';
     document.getElementById('e-label').textContent = repeating ? 'Ends' : 'Expected end';
@@ -969,10 +971,11 @@ async function viewLobbyForm(id) {
       : r === 'monthly' ? `Every month on day ${new Date(at).getDate()} at ${fmtTime(at)}.`
       : `${REPEAT[r]} on ${fmtDay(at)} at ${fmtTime(at)}.`;
     document.getElementById('repeat-hint').textContent = repeating
-      ? `${pattern}${form.endTime.value ? ' Every date lasts as long as the first one.' : ''} People sign up for the dates they can make. Each date gets its own Discord text + voice channel, named with the date, once 2+ people sign up.`
+      ? `${pattern}${form.endTime.value ? ' Every date lasts as long as the first one.' : ''} The next ${form.repeatAhead.value === '1' ? 'date is' : `${form.repeatAhead.value} dates are`} open for sign-up, and a new one opens as each passes. People sign up for the dates they can make. Each date gets its own Discord text + voice channel, named with the date, once 2+ people sign up.`
       : '';
   };
   form.repeat.addEventListener('change', updateRepeat);
+  form.repeatAhead.addEventListener('change', updateRepeat);
   for (const el of [form.startDate, form.startTime, form.endTime]) el.addEventListener('change', updateRepeat);
   updateRepeat();
   const cohostPicker = form.querySelector('#cohosts') ? userPicker(form.querySelector('#cohosts'), { initial: l?.coHosts || [], exclude: [state.me.id] }) : null;
@@ -992,7 +995,7 @@ async function viewLobbyForm(id) {
       title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
       visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt, endsAt,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
-      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null,
+      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null, repeatAhead: fd.get('repeatAhead'),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     if (cohostPicker) payload.coHostIds = cohostPicker.get().map((u) => u.id);

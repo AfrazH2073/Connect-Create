@@ -199,7 +199,11 @@ export const endOf = (l, startIso) => {
   return d && startIso ? new Date(Date.parse(startIso) + d).toISOString() : null;
 };
 
-const UPCOMING = 6; // how many future dates are open for sign-up at once
+// How many future dates are open for sign-up at once: the host picks 1-9, default 6.
+export const DEFAULT_AHEAD = 6;
+export const MAX_AHEAD = 9;
+export const aheadOf = (l) => Math.max(1, Math.min(MAX_AHEAD, parseInt(l.recurrence?.ahead, 10) || DEFAULT_AHEAD));
+const UPCOMING = DEFAULT_AHEAD;
 const SESSION_LENGTH_MS = 12 * 3600e3; // a date counts as over 12h after it starts
 export const isPast = (s, nowMs = Date.now()) => Date.parse(s.at) + SESSION_LENGTH_MS < nowMs;
 
@@ -269,8 +273,11 @@ export const dateKey = (iso, tz) => { const p = zoneParts(Date.parse(iso), tz); 
  */
 export function syncSessionSchedule(l, nowMs = Date.now()) {
   if (!l.recurrence || l.status !== 'open') return [];
-  const wanted = upcomingDates(l, nowMs);
-  const byKey = new Map(wanted.map((o) => [o.key, o]));
+  // Dates up to the max count still belong to the schedule (so lowering the count
+  // doesn't wipe dates people signed up for), but new ones only open inside the window.
+  const onSchedule = new Map(upcomingDates(l, nowMs, MAX_AHEAD).map((o) => [o.key, o]));
+  const windowKeys = new Set([...onSchedule.keys()].slice(0, aheadOf(l)));
+  const byKey = new Map([...onSchedule].filter(([k]) => windowKeys.has(k)));
   const removed = [];
   const kept = [];
   for (const s of l.sessions || []) {
@@ -280,8 +287,11 @@ export function syncSessionSchedule(l, nowMs = Date.now()) {
       if (!old || (s.discord?.textId && !s.discord.deletedAt)) kept.push(s);
       continue;
     }
-    const o = byKey.get(s.key);
+    const o = onSchedule.get(s.key);
     if (!o) { removed.push(s); continue; }
+    // Outside the window and nobody but the host signed up: close it again.
+    const onlyHost = s.memberIds.every((id) => id === l.hostId) && !s.discord?.textId;
+    if (!windowKeys.has(s.key) && onlyHost) { removed.push(s); continue; }
     s.at = o.at;
     byKey.delete(s.key);
     kept.push(s);
