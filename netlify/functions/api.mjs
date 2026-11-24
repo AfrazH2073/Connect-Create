@@ -2,7 +2,8 @@
 // netlify.toml rewrites /api/* -> this function.
 
 import { db } from '../lib/db.mjs';
-import { createSessionCookie, clearSessionCookie, readSession, parseCookies, readAccounts, accountsCookie } from '../lib/session.mjs';
+import { createSessionCookie, clearSessionCookie, readSession, parseCookies, readAccounts, accountsCookie, signLink, checkLink } from '../lib/session.mjs';
+import { lobbyFeed } from '../lib/calendar.mjs';
 import * as discord from '../lib/discord.mjs';
 import { isAdmin, reportLobbyFlags } from '../lib/reports.mjs';
 import {
@@ -517,6 +518,9 @@ function lobbyDetail(l, uid, people) {
     me: {
       isHost: l.hostId === uid, isManager: manager, isMember: member,
       requested: !!uid && l.requestIds.includes(uid), invited: !!uid && l.invitedIds.includes(uid),
+      // Private calendar feed of this person's dates (repeating lobbies only)
+      calendarSig: uid && l.recurrence && member ? signLink('cal', `${l.id}:${uid}`) : null,
+      calendarSynced: !!uid && (people[uid]?.calendarLobbyIds || []).includes(l.id),
     },
     requestCount: l.requestIds.length,
     sessions: l.recurrence ? sessionsView(l, uid, people, manager, member) : null,
@@ -623,6 +627,23 @@ async function saveAndRespond(ctx, req, l, { sync = true } = {}) {
   l.updatedAt = now();
   await db.lobbies.put(l);
   return renderLobby(ctx, l);
+}
+
+/** GET /calendar/:lobbyId/:userId/:sig.ics — no login, the signature is the key. */
+async function calendarFeed(req, lobbyId, uid, file) {
+  const sig = file.replace(/\.ics$/, '');
+  if (!checkLink('cal', `${lobbyId}:${uid}`, sig)) fail(404, 'Not found');
+  const l = await db.lobbies.get(lobbyId);
+  if (!l) fail(404, 'Not found');
+  const live = (s) => (s.discord?.textId && !s.discord.deletedAt ? guildChannelUrl(s.discord.textId) : null);
+  const body = lobbyFeed(l, uid, { siteUrl: siteOrigin(req), discordUrl: live });
+  return new Response(body, {
+    headers: {
+      'content-type': 'text/calendar; charset=utf-8',
+      'content-disposition': `inline; filename="${l.id}.ics"`,
+      'cache-control': 'no-cache',
+    },
+  });
 }
 
 async function renderLobby(ctx, l) {
@@ -831,6 +852,13 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       s.memberIds.push(me.id);
       break;
     }
+    case 'POST calendar': {
+      // Remember that this person added the lobby's calendar feed, so the page shows it as synced.
+      if (!l.recurrence) fail(400, "Only repeating lobbies have a calendar feed");
+      me.calendarLobbyIds = [...new Set([l.id, ...(me.calendarLobbyIds || [])])].slice(0, 200);
+      await db.users.put(me);
+      break;
+    }
     case 'POST withdraw': {
       const s = session();
       s.memberIds = s.memberIds.filter((x) => x !== me.id);
@@ -968,6 +996,7 @@ export default async (req) => {
     if (path === '/me/avatar' && m === 'PUT') return await uploadAvatar(ctx, b);
     if (path === '/me/avatar' && m === 'DELETE') return await removeAvatar(ctx);
     if (seg[0] === 'avatars' && seg[1] && m === 'GET') return await serveAvatar(seg[1]);
+    if (seg[0] === 'calendar' && seg[3] && m === 'GET') return await calendarFeed(req, seg[1], seg[2], seg[3]);
     if (path === '/inbox' && m === 'GET') return await inbox(ctx);
 
     if (path === '/users' && m === 'GET') return await listUsers(ctx, url);

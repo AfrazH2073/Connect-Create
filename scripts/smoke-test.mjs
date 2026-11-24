@@ -316,6 +316,47 @@ await test('optional end time, times rounded to 5 minutes', async () => {
   assert.equal(tooLong.status, 400);
 });
 
+await test('calendar feed: only your dates, follows later sign-ups, private link', async () => {
+  const first = new Date(Date.now() + 3600e3);
+  first.setUTCMinutes(0, 0, 0);
+  const { lobby } = await host.call('POST', '/lobbies', {
+    title: 'Sunday Podcast, Live', place: 'Online', visibility: 'public', maxSlots: 4,
+    scheduledAt: first.toISOString(), endsAt: new Date(+first + 90 * 60e3).toISOString(), repeat: 'weekly', timeZone: 'UTC',
+  });
+  const [d1, d2, d3] = lobby.sessions;
+  const joined = await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  const sig = joined.lobby.me.calendarSig;
+  assert.ok(sig, 'members get a feed signature');
+  assert.equal(joined.lobby.me.calendarSynced, false);
+  const feed = async (who = bob.id, s = sig) => {
+    const r = await api(new Request(`https://site.test/api/calendar/${lobby.id}/${who}/${s}.ics`));
+    return { status: r.status, type: r.headers.get('content-type'), body: r.status === 200 ? await r.text() : '' };
+  };
+  let f = await feed();
+  assert.match(f.type, /text\/calendar/);
+  assert.equal((f.body.match(/BEGIN:VEVENT/g) || []).length, 1, 'only the date bob is going to');
+  assert.ok(f.body.includes(`UID:${lobby.id}-${d1.key}@create-connect`));
+  assert.ok(f.body.includes('SUMMARY:Sunday Podcast\\, Live'), 'commas are escaped');
+  assert.ok(f.body.includes('LOCATION:Online'));
+  assert.ok(f.body.includes('\r\n'), 'lines end in CRLF');
+
+  // marking it synced, then signing up for the 3rd date adds it to the same feed
+  const synced = await bob.call('POST', `/lobbies/${lobby.id}/calendar`);
+  assert.equal(synced.lobby.me.calendarSynced, true);
+  await bob.call('POST', `/lobbies/${lobby.id}/signup/${d3.key}`);
+  f = await feed();
+  assert.equal((f.body.match(/BEGIN:VEVENT/g) || []).length, 2);
+  assert.ok(f.body.includes(`-${d3.key}@`) && !f.body.includes(`-${d2.key}@`), 'first and third, not second');
+  // dropping a date takes it off; skipped dates are left out
+  await bob.call('POST', `/lobbies/${lobby.id}/withdraw/${d1.key}`);
+  await host.call('POST', `/lobbies/${lobby.id}/skip/${d3.key}`);
+  f = await feed();
+  assert.equal((f.body.match(/BEGIN:VEVENT/g) || []).length, 0);
+
+  assert.equal((await feed(bob.id, 'x'.repeat(sig.length))).status, 404, 'wrong signature');
+  assert.equal((await feed(alice.id, sig)).status, 404, "one person's link doesn't open another's");
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);

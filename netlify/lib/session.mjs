@@ -18,6 +18,13 @@ function secret() {
 const b64 = (s) => Buffer.from(s).toString('base64url');
 const sign = (data) => crypto.createHmac('sha256', secret()).update(data).digest('base64url');
 
+/** A signature for links that must work without a login (like calendar feeds). */
+export const signLink = (purpose, data) => sign(`${purpose}:${data}`).slice(0, 32);
+export const checkLink = (purpose, data, sig) => {
+  const expected = signLink(purpose, data);
+  return typeof sig === 'string' && sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+};
+
 function seal(data) {
   const payload = b64(JSON.stringify({ ...data, exp: Math.floor(Date.now() / 1000) + MAX_AGE }));
   return `${payload}.${sign(payload)}`;

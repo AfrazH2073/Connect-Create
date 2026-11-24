@@ -369,6 +369,8 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 .repeat-box { margin-bottom: 18px; }
 .dt-pair { display: grid; grid-template-columns: 1fr 120px; gap: 8px; }
 .cal-btn { display: inline-flex; align-items: center; gap: 6px; }
+.synced { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+.cal-options { display: flex; flex-wrap: wrap; gap: 10px; }
 .repeat-box .field { margin-bottom: 10px; }
 .place-line { color: var(--muted); font-size: .85rem; margin-top: 4px; }
 .repeat-line { color: var(--accent-2); font-size: .85rem; font-weight: 600; margin-top: 4px; }

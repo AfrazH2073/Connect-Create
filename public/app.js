@@ -1025,6 +1025,36 @@ async function viewLobby(id) {
   let me, full, open;
   const run = (fn) => act(async (e) => { const r = await fn(e); if (r?.lobby) l = r.lobby; render(); });
 
+  /** Subscribe once to a private feed of your dates; later sign-ups show up in the calendar by themselves. */
+  function calendarModal(key) {
+    const feed = `${location.origin}/api/calendar/${l.id}/${state.me.id}/${me.calendarSig}.ics`;
+    const webcal = feed.replace(/^https?:/, 'webcal:');
+    const google = `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(webcal)}`;
+    const s = key ? (l.sessions || []).find((x) => x.key === key) : null;
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>📅 Add ${esc(l.title)} to your calendar</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p style="margin:0 0 10px">Your calendar will follow your sign-ups for this lobby. Every date you mark as going gets added, now and in the future, and dates you drop are taken off. You only have to do this once.</p>
+      <p class="hint" style="margin:0 0 18px">Google Calendar checks for changes a few times a day, so a new date can take a few hours to show up. The link is private to you, so don't share it.</p>
+      <div class="cal-options">
+        <button type="button" class="btn primary" id="cal-google">Add to Google Calendar</button>
+        <button type="button" class="btn" id="cal-copy">Copy link for Apple or Outlook</button>
+      </div>
+      ${s ? `<p class="hint" style="margin:16px 0 0">Only want this one date? <a href="${esc(googleCalendarUrl(l, s.at, s.endAt, s.discord?.textUrl))}" target="_blank" rel="noopener" id="cal-once">Add just ${esc(fmtKey(s.key))}</a></p>` : ''}`);
+    const markSynced = async () => {
+      if (me.calendarSynced) return;
+      try { const r = await api('POST', `${base}/calendar`); l = r.lobby; render(); } catch { /* the calendar still works; only the label stays */ }
+    };
+    el.querySelector('#cal-google').addEventListener('click', () => {
+      window.open(google, '_blank', 'noopener');
+      close(); markSynced();
+      toast('Finish in Google Calendar by clicking Add');
+    });
+    el.querySelector('#cal-copy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(webcal); toast('Link copied. In your calendar app, add a calendar from a URL and paste it.'); } catch { prompt('Copy this link:', webcal); }
+      close(); markSynced();
+    });
+  }
+
   function joinBox() {
     if (!open) return `<div class="notice">This lobby is ${esc(l.status)}${l.completedAt ? ' (' + esc(fmtDate(l.completedAt)) + ')' : ''}.</div>`;
     if (!state.me) return `<p class="muted">Log in to join this lobby.</p>${loginBtn()}`;
@@ -1085,7 +1115,9 @@ async function viewLobby(id) {
       let action = '';
       if (s.skipped) action = `<span class="tag completed">Skipped</span>${me.isManager && !s.past ? `<button class="btn ghost sm" data-unskip="${esc(s.key)}">Restore</button>` : ''}`;
       else if (s.past) action = '<span class="tag completed">Done</span>';
-      else if (s.signedUp) action = `<span class="going">✓ Going</span>${calendarBtn(l, s.at, s.endAt, s.discord?.textUrl, 'Calendar')}<button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
+      else if (s.signedUp) action = `<span class="going">✓ Going</span>${me.calendarSynced
+        ? '<span class="synced" title="This date is in your calendar feed">📅 In calendar</span>'
+        : `<button class="btn sm cal-btn" data-cal="${esc(s.key)}">📅 Calendar</button>`}<button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
       else if (canPick) action = fullDate ? '<span class="dim">Full</span>' : `<button class="btn primary sm" data-signup="${esc(s.key)}">Sign up</button>`;
       const skip = me.isManager && !s.skipped && !s.past ? `<button class="btn ghost sm" data-skip="${esc(s.key)}" title="Cancel this date for everyone">Skip date</button>` : '';
       const links = s.discord ? `<div class="row" style="gap:6px"><a class="btn discord sm" href="${esc(s.discord.textUrl)}" target="_blank" rel="noopener"># Chat</a>${s.discord.voiceUrl ? `<a class="btn discord sm" href="${esc(s.discord.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a>` : ''}</div>` : '';
@@ -1099,7 +1131,7 @@ async function viewLobby(id) {
       </div>`;
     };
     return `<div class="card">
-      <div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">Dates</h2><span class="dim">🔁 ${esc(repeatText(l.recurrence))}</span></div>
+      <div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">Dates</h2><div class="row" style="gap:10px"><span class="dim">🔁 ${esc(repeatText(l.recurrence))}</span>${me.calendarSig ? `<button class="btn ghost sm" data-cal="">${me.calendarSynced ? '📅 Calendar synced' : '📅 Sync to calendar'}</button>` : ''}</div></div>
       ${gate ? `<div class="notice" style="margin:8px 0 4px">${esc(gate)}</div>` : ''}
       ${sessions.length ? sessions.map(row).join('') : '<p class="dim" style="margin:8px 0 0">No upcoming dates.</p>'}
       <p class="hint" style="margin:12px 0 0">New dates open automatically as old ones pass.</p>
@@ -1236,10 +1268,11 @@ async function viewLobby(id) {
     document.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', run(async () => { if (!await askConfirm({ title: 'Remove this person?', message: 'They will be taken out of the lobby and lose access to its Discord channels.', confirmLabel: 'Remove', danger: true })) return; return api('POST', `${base}/kick/${b.dataset.kick}`); })));
     document.querySelectorAll('[data-signup]').forEach((b) => b.addEventListener('click', run(() => withServerCheck(async () => {
       const r = await api('POST', `${base}/signup/${b.dataset.signup}`);
-      toast("You're signed up for that date!");
+      toast(r.lobby.me.calendarSynced ? "You're signed up! It'll be added to your calendar." : "You're signed up for that date!");
       l = r.lobby; render();
       return r;
     }))));
+    document.querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', () => calendarModal(b.dataset.cal)));
     document.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/withdraw/${b.dataset.withdraw}`))));
     document.querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', run(async () => {
       const ok = await askConfirm({
