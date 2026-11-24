@@ -317,27 +317,158 @@ function creatorCard(u) {
   </a>`;
 }
 
+// ---------- home + "how it works" ----------
+
+const step = (n, title, body) => `<li class="step"><span class="step-n">${n}</span><div><h3>${title}</h3><p>${body}</p></div></li>`;
+const tile = (icon, title, body) => `<div class="card tile"><div class="feat-icon">${icon}</div><h3>${title}</h3><p>${body}</p></div>`;
+const faq = (q, a) => `<details class="faq"><summary>${q}</summary><p>${a}</p></details>`;
+
+/** The long explanation of the site. Shown on the home page to visitors, and at #/about to everyone. */
+function aboutSections({ lobbiesPreview = '' } = {}) {
+  const platforms = ['youtube', 'twitch', 'tiktok', 'instagram', 'twitter', 'substack']
+    .map((p) => `<span class="chip p-${p}">${ICON[p] || ''}${esc(platformLabel(p))}</span>`).join('');
+  const cta = state.me
+    ? `<a class="btn primary lg" href="#/lobbies/new">Create a lobby</a><a class="btn lg" href="#/lobbies">Browse lobbies</a>`
+    : `${loginBtn('Sign up with Discord', 'lg')}<a class="btn lg" href="#/lobbies">Browse lobbies</a>`;
+  return `
+    <section class="about-block" id="what">
+      <div class="about-head"><span class="eyebrow">What it's for</span><h2>One place to find people to make things with</h2></div>
+      <div class="about-split">
+        <div>
+          <p class="lead">Collabs usually start in scattered DMs, comment sections and group chats. Someone says "we should do a stream together", and it never happens because nobody knows who's free, when, or where to talk about it.</p>
+          <p>Create &amp; Connect fixes that. You post what you're planning: a Mario Party stream, a podcast episode, a video that needs a few guests, or a weekly game night. Other creators find it, join, and you're all put in a private Discord chat to plan it. When it's done, it counts toward your collab history so the next person knows you're good to work with.</p>
+        </div>
+        <div class="card who">
+          <h3>Who it's for</h3>
+          <ul class="ticks">
+            <li>Streamers looking for co-op partners or guests</li>
+            <li>YouTubers planning group videos or collab series</li>
+            <li>Podcasters booking guests or co-hosts</li>
+            <li>TikTok, Instagram and short-form creators doing duets and trends</li>
+            <li>Writers swapping features or cross-posts</li>
+            <li>Anyone who wants a regular group, like Smash every other Sunday</li>
+          </ul>
+          <div class="chips" style="margin-top:14px">${platforms}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="about-block" id="how">
+      <div class="about-head"><span class="eyebrow">How it works</span><h2>From idea to recording in five steps</h2></div>
+      <ol class="steps">
+        ${step(1, 'Sign in with Discord', "There's no separate password. Your account is your Discord account, so the Discord name on every profile is really that person. If you aren't in the Create and Connect Discord server yet, the site can add you with one click.")}
+        ${step(2, 'Set up your profile', 'Add a picture, a short bio, your pronouns, the kinds of content you make, and links to your YouTube, Twitch, TikTok, Instagram, X or Substack. Say what kind of collabs you\'re looking for so people can find you on the Creators page.')}
+        ${step(3, 'Open or join a lobby', 'A lobby is one collab: a title, the game or activity, roughly where it happens (Online, or a city), when, how many people, and what it\'ll be posted on. Make your own, or browse and search everyone else\'s.')}
+        ${step(4, 'Talk it through on Discord', 'Once 2 or more people are in a lobby, a private text and voice channel opens for it in the Create and Connect server, in its own category. Only lobby members can see it. People are added and removed automatically as they join and leave.')}
+        ${step(5, 'Make it, then wrap it up', 'When you\'re done, the host marks the lobby completed. Everyone can ask each other for reviews, show the collab on their profile, and it goes into their collab history. The Discord channels are cleaned up two weeks later.')}
+      </ol>
+    </section>
+
+    ${lobbiesPreview}
+
+    <section class="about-block" id="types">
+      <div class="about-head"><span class="eyebrow">Lobby types</span><h2>You decide who can see it and who gets in</h2></div>
+      <div class="tiles four">
+        ${tile('🌍', 'Public', 'Anyone can find it and join. Good for open game nights and big group videos.')}
+        ${tile('🤝', 'Friends', 'Only people on your Create &amp; Connect friends list can see it.')}
+        ${tile('🔒', 'Private', "Only the people you invite can see it. It doesn't show up anywhere for anyone else.")}
+        ${tile('🔢', 'Code', 'Anyone can see it, but joining needs a 4-digit code you share yourself. Great for your community or a Discord announcement.')}
+      </div>
+      <div class="card note-card"><strong>✋ Needs approval</strong><p>Turn this on for a Public, Friends or Private lobby and people <em>ask</em> to join instead of joining straight away. You or a co-host approve each person from your Inbox. Code lobbies skip this, because having the code is the approval.</p></div>
+    </section>
+
+    <section class="about-block" id="repeat">
+      <div class="about-split">
+        <div>
+          <span class="eyebrow">Repeating lobbies</span>
+          <h2>Run a regular thing without re-posting it</h2>
+          <p>Doing something every week, every other Sunday, or once a month? Make the lobby repeat. The next six dates are always open, and people sign up for just the dates they can make, so each date has its own list and its own slots.</p>
+          <p>Each date also gets its own Discord channels, named with the date so they're easy to tell apart. Can't make one week? Skip that date for everyone, and restore it if plans change.</p>
+        </div>
+        <div class="card discord-mock" aria-label="Example of a lobby's Discord category">
+          <div class="dm-cat">⌄ SMASH SUNDAYS</div>
+          <div class="dm-ch"># 2026-12-06-smash-sundays</div>
+          <div class="dm-ch">🔊 2026-12-06 Smash Sundays</div>
+          <div class="dm-ch"># 2026-12-20-smash-sundays</div>
+          <div class="dm-ch">🔊 2026-12-20 Smash Sundays</div>
+          <p class="hint" style="margin:12px 0 0">Every lobby gets its own category. Only the people signed up for a date can see that date's channels.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="about-block" id="rep">
+      <div class="about-head"><span class="eyebrow">Your reputation</span><h2>Show people you're good to work with</h2></div>
+      <div class="tiles">
+        ${tile('🎬', 'Collab showcase', "Add videos, VODs and clips you've made with others. Tag your collaborators, and once they confirm, it shows on their profile too.")}
+        ${tile('⭐', 'Reviews', "Ask someone you've worked with to review you as a collaborator. You choose which reviews show on your profile.")}
+        ${tile('📜', 'Collab history', 'Optionally list the lobbies you finished with other people, and who with. Only lobbies the host marked completed count.')}
+        ${tile('👥', 'Friends', 'Add the creators you click with, so you can make Friends-only lobbies and find each other again.')}
+      </div>
+    </section>
+
+    <section class="about-block" id="safety">
+      <div class="about-head"><span class="eyebrow">Safety</span><h2>Built so collabs stay good</h2></div>
+      <div class="tiles">
+        ${tile('✅', 'Real Discord accounts', 'Everyone signs in through Discord, so nobody can pretend to be someone else\'s Discord.')}
+        ${tile('🙈', 'Private means private', 'Private and Friends lobbies are hidden from everyone who isn\'t allowed in, including in search. Lobby chats are only visible to members.')}
+        ${tile('🚩', 'Hosts can flag problems', "When a host completes a lobby, they can flag anyone who caused trouble. The server's admins get the report privately, and the flagged lobby doesn't count toward that person's history.")}
+      </div>
+    </section>
+
+    <section class="about-block" id="faq">
+      <div class="about-head"><span class="eyebrow">Questions</span><h2>Good to know</h2></div>
+      <div class="faqs">
+        ${faq('Do I need a Discord account?', 'Yes. You sign in with Discord, and lobby chats happen in the Create and Connect Discord server. If you\'re not in the server yet, the site offers to add you when you join or host a lobby.')}
+        ${faq('Do I have to be a big creator?', 'No. Any size is welcome. Lobbies say what they\'re looking for, and the host decides who joins.')}
+        ${faq('What can other people see about me?', 'Your profile: name, picture, bio, pronouns, the links you added, your Discord username, collab videos, the reviews you chose to show, and your collab history if you turned it on.')}
+        ${faq('Who can see a lobby\'s Discord channels?', 'Only people in that lobby (or, for repeating lobbies, signed up for that date), plus the server\'s admins.')}
+        ${faq('What happens to the channels afterwards?', 'They\'re deleted two weeks after the host marks the lobby completed, or right away if the lobby is cancelled. For repeating lobbies, each date\'s channels go two weeks after that date.')}
+        ${faq('Can I host with someone else?', 'Yes. Add up to five co-hosts. They can edit the lobby, approve requests, invite people, and see the join code.')}
+        ${faq('Someone was a problem in my lobby. What do I do?', 'When you mark the lobby completed, tick the person and say what happened. It goes privately to the server admins. The person isn\'t told who flagged them.')}
+      </div>
+    </section>
+
+    <section class="cta-band card">
+      <h2>Ready to make something?</h2>
+      <p>${state.me ? 'Post your next idea, or see what other creators are planning.' : 'Signing up takes a minute with Discord.'}</p>
+      <div class="row" style="justify-content:center">${cta}</div>
+    </section>`;
+}
+
 async function viewHome(params) {
   if (params.get('error')) toast('Discord login failed — please try again.', true);
   const { lobbies } = await api('GET', '/lobbies');
   const top = lobbies.slice(0, 6);
-  const hero = state.me ? `
-    <div class="page-head"><div><h1>Hey ${esc(state.me.displayName)} 👋</h1><p>Here's what's open right now.</p></div>
-    <div class="row"><a class="btn" href="#/creators">Find creators</a><a class="btn primary" href="#/lobbies/new">Create a lobby</a></div></div>` : `
+  const lobbyList = `<div class="page-head"><h2 style="margin:0">Open lobbies</h2><a class="btn sm ghost" href="#/lobbies">See all →</a></div>
+    ${top.length ? `<div class="cards">${top.map(lobbyCard).join('')}</div>` : `<div class="empty">No open lobbies yet. ${state.me ? '<a href="#/lobbies/new">Start the first one!</a>' : 'Log in and start the first one!'}</div>`}`;
+  if (state.me) {
+    $app.innerHTML = `
+      <div class="page-head"><div><h1>Hey ${esc(state.me.displayName)} 👋</h1><p>Here's what's open right now. New here? <a href="#/about">See how it works</a>.</p></div>
+      <div class="row"><a class="btn" href="#/creators">Find creators</a><a class="btn primary" href="#/lobbies/new">Create a lobby</a></div></div>
+      <section class="section">${lobbyList}</section>`;
+    return;
+  }
+  $app.innerHTML = `
     <section class="hero">
+      <span class="eyebrow">For streamers, YouTubers, podcasters and every kind of creator</span>
       <h1>Find your next <span>collab</span>.</h1>
-      <p>Create &amp; Connect is where creators from YouTube, Twitch, TikTok, Instagram, X and Substack meet, open lobbies for streams and videos, and jump straight into a private Discord chat together.</p>
-      <div class="row" style="justify-content:center">${loginBtn('Sign up with Discord', 'lg')}<a class="btn lg" href="#/lobbies">Browse lobbies</a></div>
-      <div class="features">
-        <div class="card"><div class="feat-icon">🎮</div><h3>Open a lobby</h3><p>Planning a "Mario Party" stream or a podcast episode? Post it, set slots and visibility, and let creators join.</p></div>
-        <div class="card"><div class="feat-icon">${ICON.discord}</div><h3>Instant Discord rooms</h3><p>Once 2+ people are in, we create a private text + voice channel in the Create and Connect server just for your lobby.</p></div>
-        <div class="card"><div class="feat-icon">🎬</div><h3>Show your collabs</h3><p>Pin videos and streams you've done with others so people can see how you work together.</p></div>
-        <div class="card"><div class="feat-icon">✅</div><h3>Verified Discord</h3><p>Every account signs in through Discord, so the Discord tag on a profile is always really theirs.</p></div>
-      </div>
-    </section>`;
-  $app.innerHTML = `${hero}
-    <section class="section"><div class="page-head"><h2 style="margin:0">Open lobbies</h2><a class="btn sm ghost" href="#/lobbies">See all →</a></div>
-    ${top.length ? `<div class="cards">${top.map(lobbyCard).join('')}</div>` : `<div class="empty">No open lobbies yet. ${state.me ? '<a href="#/lobbies/new">Start the first one!</a>' : 'Log in and start the first one!'}</div>`}</section>`;
+      <p>Create &amp; Connect is where creators find each other, plan streams, videos and podcasts together, and get a private Discord chat for every collab, set up automatically.</p>
+      <div class="row" style="justify-content:center">${loginBtn('Sign up with Discord', 'lg')}<button type="button" class="btn lg" id="to-how">How it works ↓</button></div>
+      <div class="hero-points"><span>🎮 Open a lobby in a minute</span><span>💬 Private Discord text &amp; voice</span><span>🔁 Repeating events</span><span>⭐ Reviews &amp; collab history</span></div>
+    </section>
+    ${aboutSections({ lobbiesPreview: `<section class="about-block">${lobbyList}</section>` })}`;
+  // A plain #how link would be read as a page by the router, so scroll by hand.
+  document.getElementById('to-how').addEventListener('click', () => document.getElementById('how').scrollIntoView({ behavior: 'smooth' }));
+}
+
+async function viewAbout() {
+  $app.innerHTML = `
+    <section class="hero hero-sm">
+      <span class="eyebrow">How it works</span>
+      <h1>What <span>Create &amp; Connect</span> is for</h1>
+      <p>A place for creators to find collaborators, plan things together, and get a private Discord space for every collab.</p>
+    </section>
+    ${aboutSections()}`;
 }
 
 async function viewLobbies(params) {
@@ -1172,7 +1303,7 @@ async function route() {
   document.getElementById('modal-root').innerHTML = '';
 
   // New accounts must finish their profile first.
-  if (state.me && !state.me.onboarded && !(seg[0] === 'me' && seg[1] === 'edit')) {
+  if (state.me && !state.me.onboarded && seg[0] !== 'about' && !(seg[0] === 'me' && seg[1] === 'edit')) {
     location.hash = '#/me/edit?welcome=1';
     return;
   }
@@ -1188,6 +1319,7 @@ async function route() {
   window.scrollTo(0, 0);
   try {
     if (!seg.length) await viewHome(params);
+    else if (seg[0] === 'about') await viewAbout();
     else if (seg[0] === 'lobbies' && !seg[1]) await viewLobbies(params);
     else if (seg[0] === 'lobbies' && seg[1] === 'new') await viewLobbyForm(null);
     else if (seg[0] === 'lobbies' && seg[2] === 'edit') await viewLobbyForm(seg[1]);

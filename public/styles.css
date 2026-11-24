@@ -200,6 +200,50 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 .features .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 .feat-icon { font-size: 1.6rem; }
 
+.hero .eyebrow { display: inline-block; margin-bottom: 14px; }
+.hero-sm { padding: 30px 0 10px; }
+.hero-sm h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); }
+.hero-points { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 26px; color: var(--muted); font-size: .92rem; }
+
+/* home / how it works */
+.eyebrow { color: var(--accent-2); font-weight: 700; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
+.about-block { padding: 46px 0 6px; scroll-margin-top: 50px; }
+.about-head { max-width: 680px; margin-bottom: 22px; }
+.about-block h2 { font-size: clamp(1.45rem, 3.4vw, 2rem); line-height: 1.15; margin: 6px 0 0; letter-spacing: -.01em; }
+.about-block p { color: var(--muted); line-height: 1.65; }
+.about-block .lead { color: var(--text); font-size: 1.12rem; margin-top: 0; }
+.about-split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 32px; align-items: start; }
+.about-split > div > h2 { margin-bottom: 14px; }
+.who h3 { margin: 0 0 10px; }
+.ticks { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.ticks li { padding-left: 26px; position: relative; color: var(--muted); }
+.ticks li::before { content: '✓'; position: absolute; left: 0; color: var(--ok); font-weight: 700; }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; counter-reset: none; }
+.step { display: grid; grid-template-columns: 44px 1fr; gap: 16px; align-items: start; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+.step-n { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--grad); color: #fff; }
+.step h3 { margin: 6px 0 4px; }
+.step p { margin: 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.tiles.four { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.tile h3 { margin: 8px 0 6px; }
+.tile p { margin: 0; font-size: .95rem; }
+.note-card { margin-top: 14px; border-color: rgba(251, 191, 36, .4); }
+.note-card p { margin: 6px 0 0; }
+.discord-mock { background: #1e1f22; border-color: #2b2d31; font-size: .92rem; }
+.dm-cat { color: #949ba4; font-size: .75rem; font-weight: 700; letter-spacing: .04em; margin-bottom: 8px; }
+.dm-ch { color: #b5bac1; padding: 6px 10px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-ch:first-of-type { background: #35373c; color: #f2f3f5; }
+.faqs { display: grid; gap: 10px; max-width: 820px; }
+.faq { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 0 18px; }
+.faq summary { cursor: pointer; padding: 15px 0; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: '+'; color: var(--muted); font-size: 1.2rem; line-height: 1; }
+.faq[open] summary::after { content: '−'; }
+.faq p { margin: 0 0 16px; }
+.cta-band { text-align: center; margin: 50px 0 10px; padding: 36px 20px; background: linear-gradient(135deg, rgba(139, 92, 246, .18), rgba(236, 72, 153, .14)); }
+.cta-band h2 { margin: 0 0 6px; }
+.cta-band p { color: var(--muted); margin: 0 0 20px; }
+
 /* profile */
 .profile-head { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
 .profile-head h1 { margin: 0; font-size: 2rem; line-height: 1.1; }
@@ -359,6 +403,7 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 
 @media (max-width: 860px) {
   .lobby-layout { grid-template-columns: 1fr; }
+  .about-split { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
@@ -375,4 +420,6 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
   .page-head h1 { font-size: 1.6rem; }
   .profile-head .actions { margin-left: 0; }
   .filters select { flex: 1 1 140px; }
+  .step { grid-template-columns: 1fr; gap: 10px; padding: 16px; }
+  .about-block { padding-top: 34px; scroll-margin-top: 110px; }
 }
