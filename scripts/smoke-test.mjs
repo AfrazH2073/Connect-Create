@@ -402,6 +402,75 @@ await test('repeating lobbies from before: dates move out of the shared category
   assert.equal(after.discord.categoryId, null);
 });
 
+await test('join questions: everyone answers, only hosts see answers, approval uses them', async () => {
+  const qs = [
+    { label: "What's your main channel?", type: 'short', required: true },
+    { label: 'How big is your audience?', type: 'choice', options: ['Under 1k', '1k-10k', '10k+'], required: true },
+    { label: 'What do you make?', type: 'multi', options: ['Streams', 'Videos', 'Podcasts'] },
+    { label: 'Anything else?', type: 'long' },
+  ];
+  assert.equal((await host.call('POST', '/lobbies', { title: 'Bad Q', questions: [{ label: 'Pick', type: 'choice', options: ['Only one'] }] })).status, 400, 'choices need 2+ options');
+
+  // Public: you must answer before joining
+  const pub = (await host.call('POST', '/lobbies', { title: 'Q Public', visibility: 'public', maxSlots: 6, questions: qs })).lobby;
+  assert.equal(pub.questions.length, 4);
+  const [q1, q2, q3, q4] = pub.questions;
+  assert.ok(q1.id && q1.required && !q4.required);
+  const missing = await bob.call('POST', `/lobbies/${pub.id}/join`, { answers: { [q1.id]: 'bobstreams' } });
+  assert.equal(missing.status, 400);
+  assert.match(missing.error, /How big is your audience/);
+  const badOption = await bob.call('POST', `/lobbies/${pub.id}/join`, { answers: { [q1.id]: 'bobstreams', [q2.id]: 'A million' } });
+  assert.equal(badOption.status, 400, 'answers must be one of the options');
+  const ok = await bob.call('POST', `/lobbies/${pub.id}/join`, { answers: { [q1.id]: 'bobstreams', [q2.id]: '1k-10k', [q3.id]: ['Streams', 'Nope', 'Videos'] } });
+  assert.equal(ok.lobby.me.isMember, true);
+  assert.deepEqual(ok.lobby.me.answers[q3.id], ['Streams', 'Videos'], 'unknown checkbox options dropped');
+  assert.equal(ok.lobby.responses, undefined, "members don't see others' answers");
+  const hostView = (await host.call('GET', `/lobbies/${pub.id}`)).lobby;
+  assert.equal(hostView.responses.length, 1);
+  assert.equal(hostView.responses[0].user.id, bob.id);
+  assert.equal(hostView.responses[0].answers[q1.id], 'bobstreams');
+  assert.equal((await alice.call('GET', `/lobbies/${pub.id}`)).lobby.questions.length, 4, 'anyone who can see the lobby sees the questions');
+
+  // editing keeps question ids (so answers still line up); host never answers
+  const edited = (await host.call('PUT', `/lobbies/${pub.id}`, { title: 'Q Public', visibility: 'public', maxSlots: 6, questions: [{ ...q1, label: 'Main channel link?' }, q2] })).lobby;
+  assert.equal(edited.questions[0].id, q1.id);
+  assert.equal(edited.questions.length, 2);
+  // leaving forgets your answers
+  await bob.call('POST', `/lobbies/${pub.id}/leave`);
+  assert.equal((await host.call('GET', `/lobbies/${pub.id}`)).lobby.responses.length, 0);
+
+  // Approval: answers come with the request, in the lobby and the Inbox
+  const appr = (await host.call('POST', '/lobbies', { title: 'Q Approval', visibility: 'public', approval: true, questions: qs })).lobby;
+  const [a1, a2] = appr.questions;
+  assert.equal((await alice.call('POST', `/lobbies/${appr.id}/join`)).status, 400, 'no answers, no request');
+  const req = await alice.call('POST', `/lobbies/${appr.id}/join`, { answers: { [a1.id]: 'alicevids', [a2.id]: '10k+' } });
+  assert.equal(req.lobby.me.requested, true);
+  const inbox = await host.call('GET', '/inbox');
+  const entry = inbox.approvals.find((x) => x.lobby.id === appr.id);
+  assert.equal(entry.questions.length, 4);
+  assert.equal(entry.requests[0].answers[a2.id], '10k+');
+  assert.equal((await host.call('GET', `/lobbies/${appr.id}`)).lobby.responses[0].status, 'requested');
+  await host.call('POST', `/lobbies/${appr.id}/deny/${alice.id}`);
+  assert.equal((await host.call('GET', `/lobbies/${appr.id}`)).lobby.responses.length, 0, 'denied answers are deleted');
+
+  // Code: wrong code doesn't save answers; right code + answers joins
+  const code = (await host.call('POST', '/lobbies', { title: 'Q Code', visibility: 'code', questions: [qs[0]] })).lobby;
+  const c1 = code.questions[0].id;
+  assert.equal((await carol.call('POST', `/lobbies/${code.id}/join`, { code: code.code === '0000' ? '1111' : '0000', answers: { [c1]: 'x' } })).status, 403);
+  assert.equal((await carol.call('POST', `/lobbies/${code.id}/join`, { code: code.code })).status, 400, 'right code still needs answers');
+  assert.equal((await carol.call('POST', `/lobbies/${code.id}/join`, { code: code.code, answers: { [c1]: 'carolcasts' } })).lobby.me.isMember, true);
+
+  // Repeating: signing up for your first date asks the questions
+  const rep = (await host.call('POST', '/lobbies', {
+    title: 'Q Weekly', visibility: 'public', scheduledAt: new Date(Date.now() + 3600e3).toISOString(), repeat: 'weekly', timeZone: 'UTC', questions: [qs[0]],
+  })).lobby;
+  const key = rep.sessions[0].key;
+  assert.equal((await bob.call('POST', `/lobbies/${rep.id}/signup/${key}`)).status, 400);
+  const su = await bob.call('POST', `/lobbies/${rep.id}/signup/${key}`, { answers: { [rep.questions[0].id]: 'bobstreams' } });
+  assert.equal(su.lobby.me.isMember, true);
+  assert.equal((await bob.call('POST', `/lobbies/${rep.id}/signup/${rep.sessions[1].key}`)).status, 200, 'no questions again for later dates');
+});
+
 await test('filter lobbies by any combination of types', async () => {
   const types = async (q) => new Set((await host.call('GET', `/lobbies?visibility=${q}`)).lobbies.map((l) => l.visibility));
   assert.deepEqual([...await types('code')], ['code']);

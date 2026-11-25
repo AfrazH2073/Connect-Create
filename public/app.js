@@ -452,6 +452,7 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
         ${faq('What can other people see about me?', 'Your profile: name, picture, bio, pronouns, the links you added, your Discord username, collab videos, the reviews you chose to show, and your collab history if you turned it on.')}
         ${faq('Who can see a lobby\'s Discord channels?', 'Only people in that lobby (or, for repeating lobbies, signed up for that date), plus the server\'s admins.')}
         ${faq('What happens to the channels afterwards?', 'They\'re deleted two weeks after the host marks the lobby completed, or right away if the lobby is cancelled. For repeating lobbies, each date\'s channels go two weeks after that date.')}
+        ${faq('Can I ask people questions before they join?', 'Yes. Add up to 10 questions to any lobby, like short answers, multiple choice or checkboxes. Everyone answers before joining, and only you and your co-hosts see the answers. With Needs approval on, the answers sit right next to each request so you can decide.')}
         ${faq('Can I host with someone else?', 'Yes. Add up to five co-hosts. They can edit the lobby, approve requests, invite people, and see the join code.')}
         ${faq('Someone was a problem in my lobby. What do I do?', 'When you mark the lobby completed, tick the person and say what happened. It goes privately to the server admins. The person isn\'t told who flagged them.')}
       </div>
@@ -893,6 +894,121 @@ function addClipModal() {
   });
 }
 
+// ---------- join questions ----------
+
+const Q_TYPES = { short: 'Short answer', long: 'Paragraph', choice: 'Multiple choice (pick one)', multi: 'Checkboxes (pick any)' };
+const MAX_Q = 10;
+
+/** The host's question builder. get() returns the questions to save. */
+function questionEditor(list, addBtn, initial) {
+  let qs = initial.map((q) => ({ ...q, options: [...(q.options || [])] }));
+  const draw = () => {
+    list.innerHTML = qs.map((q, i) => `
+      <div class="q-edit" data-i="${i}">
+        <div class="q-edit-top">
+          <span class="q-num">${i + 1}</span>
+          <input type="text" class="q-label" maxlength="200" placeholder="Question, e.g. What's your main channel?" value="${esc(q.label)}" aria-label="Question ${i + 1}" />
+          <button type="button" class="btn ghost sm q-del" aria-label="Remove question ${i + 1}">✕</button>
+        </div>
+        <div class="q-edit-row">
+          <select class="q-type" aria-label="Answer type">${Object.entries(Q_TYPES).map(([k, t]) => `<option value="${k}" ${q.type === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <label class="check q-req"><input type="checkbox" class="q-required" ${q.required ? 'checked' : ''} /> <span>Required</span></label>
+          <span class="q-move"><button type="button" class="btn ghost sm q-up" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="btn ghost sm q-down" ${i === qs.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></span>
+        </div>
+        ${['choice', 'multi'].includes(q.type) ? `<textarea class="q-options" rows="3" placeholder="One option per line (at least 2)" aria-label="Options">${esc(q.options.join('\n'))}</textarea>` : ''}
+      </div>`).join('');
+    addBtn.hidden = qs.length >= MAX_Q;
+  };
+  const read = () => {
+    list.querySelectorAll('.q-edit').forEach((el) => {
+      const q = qs[+el.dataset.i];
+      q.label = el.querySelector('.q-label').value;
+      q.type = el.querySelector('.q-type').value;
+      q.required = el.querySelector('.q-required').checked;
+      const opts = el.querySelector('.q-options');
+      if (opts) q.options = opts.value.split('\n').map((o) => o.trim()).filter(Boolean);
+    });
+  };
+  list.addEventListener('change', (e) => { read(); if (e.target.classList.contains('q-type')) draw(); });
+  list.addEventListener('click', (e) => {
+    const el = e.target.closest('.q-edit');
+    if (!el) return;
+    read();
+    const i = +el.dataset.i;
+    if (e.target.closest('.q-del')) qs.splice(i, 1);
+    else if (e.target.closest('.q-up') && i > 0) [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]];
+    else if (e.target.closest('.q-down') && i < qs.length - 1) [qs[i + 1], qs[i]] = [qs[i], qs[i + 1]];
+    else return;
+    draw();
+  });
+  addBtn.addEventListener('click', () => {
+    read();
+    qs.push({ label: '', type: 'short', options: [], required: true });
+    draw();
+    list.querySelector('.q-edit:last-child .q-label')?.focus();
+  });
+  draw();
+  return { get: () => { read(); return qs.filter((q) => q.label.trim()); } };
+}
+
+/**
+ * Ask the lobby's questions before joining. Resolves the answers ({ id: value }),
+ * or null if they close it. `verb` is the button text, e.g. "Request to join".
+ */
+function answerQuestions(l, verb) {
+  return new Promise((resolve) => {
+    let done = null;
+    const field = (q) => {
+      const req = q.required ? ' <span class="req">*</span>' : '';
+      const name = `q_${q.id}`;
+      if (q.type === 'long') return `<div class="field"><label for="${name}">${esc(q.label)}${req}</label><textarea id="${name}" name="${name}" maxlength="1000" rows="3"></textarea></div>`;
+      if (q.type === 'short') return `<div class="field"><label for="${name}">${esc(q.label)}${req}</label><input type="text" id="${name}" name="${name}" maxlength="200" /></div>`;
+      const kind = q.type === 'multi' ? 'checkbox' : 'radio';
+      return `<fieldset class="field q-fieldset"><legend>${esc(q.label)}${req}${q.type === 'multi' ? ' <span class="hint">(pick any)</span>' : ''}</legend>
+        ${q.options.map((o) => `<label class="q-opt"><input type="${kind}" name="${name}" value="${esc(o)}" /> <span>${esc(o)}</span></label>`).join('')}</fieldset>`;
+    };
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>A few questions from the host</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p class="hint" style="margin:0 0 16px">Only the host and co-hosts of <strong>${esc(l.title)}</strong> see your answers.</p>
+      <form id="qa">${l.questions.map(field).join('')}
+        <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">${esc(verb)}</button></div>
+      </form>`, { onClose: () => resolve(done) });
+    const form = el.querySelector('#qa');
+    form.querySelector('input, textarea')?.focus();
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const answers = {};
+      for (const q of l.questions) {
+        const name = `q_${q.id}`;
+        const v = q.type === 'multi' ? [...form.querySelectorAll(`[name="${name}"]:checked`)].map((i) => i.value)
+          : q.type === 'choice' ? form.querySelector(`[name="${name}"]:checked`)?.value || ''
+          : form.elements[name].value.trim();
+        if (q.required && (!v || !v.length)) { toast(`Please answer "${q.label}"`, true); return; }
+        if (v && v.length) answers[q.id] = v;
+      }
+      done = answers;
+      close();
+    });
+  });
+}
+
+/** One person's answers, laid out for the host. */
+function answersHtml(questions, answers) {
+  if (!answers) return '<p class="dim" style="margin:0">No answers (they joined before the questions were added).</p>';
+  const rows = questions.map((q) => {
+    const a = answers[q.id];
+    const shown = a == null ? '<span class="dim">No answer</span>' : esc(Array.isArray(a) ? a.join(', ') : a);
+    return `<div class="qa-row"><div class="qa-q">${esc(q.label)}</div><div class="qa-a">${shown}</div></div>`;
+  });
+  return `<div class="qa-list">${rows.join('')}</div>`;
+}
+
+function showAnswers(user, questions, answers) {
+  openModal(`
+    <div class="modal-head"><h2>${esc(user.displayName)}'s answers</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+    ${answersHtml(questions, answers)}`);
+}
+
 async function viewLobbyForm(id) {
   if (!state.me) return requireLogin('Log in to create a lobby.');
   if (!state.me.onboarded) { location.hash = '#/me/edit'; return; }
@@ -935,6 +1051,12 @@ async function viewLobbyForm(id) {
           <p class="hint" id="vis-hint" style="margin-top:8px"></p>
           <label class="check" id="approval-row" style="margin-top:12px"><input type="checkbox" name="approval" ${l?.approval ? 'checked' : ''} /> <span><strong>Needs approval</strong><br /><span class="hint">People ask to join and you or a co-host approve them, invited people and friends included.</span></span></label>
           <p class="hint" id="approval-off" hidden>Code lobbies don't use approval: anyone with the code gets in.</p>
+        </div>
+        <div class="field">
+          <label>Questions for people joining <span class="hint">(optional)</span></label>
+          <p class="hint" style="margin:0 0 10px">Ask what you need to know, like their channel size, what games they play, or when they're free. Everyone answers before they join or request to join, whatever the lobby type. Only you and co-hosts see the answers.</p>
+          <div id="q-list" class="q-list"></div>
+          <button type="button" class="btn sm" id="q-add">+ Add a question</button>
         </div>
         ${!l || l.me.isHost ? `<div class="field"><label>Co-hosts <span class="hint">(can approve, invite, edit &amp; see the code)</span></label><div id="cohosts"></div></div>` : ''}
         ${!l ? `<div class="field" id="invite-field" hidden><label>Invite creators <span class="hint">(only invited creators can see a Private lobby)</span></label><div id="invites"></div></div>` : ''}
@@ -979,6 +1101,7 @@ async function viewLobbyForm(id) {
   form.repeatAhead.addEventListener('change', updateRepeat);
   for (const el of [form.startDate, form.startTime, form.endTime]) el.addEventListener('change', updateRepeat);
   updateRepeat();
+  const questions = questionEditor(document.getElementById('q-list'), document.getElementById('q-add'), l?.questions || []);
   const cohostPicker = form.querySelector('#cohosts') ? userPicker(form.querySelector('#cohosts'), { initial: l?.coHosts || [], exclude: [state.me.id] }) : null;
   const invitePicker = form.querySelector('#invites') ? userPicker(form.querySelector('#invites'), { exclude: [state.me.id] }) : null;
   form.addEventListener('submit', async (e) => {
@@ -996,7 +1119,7 @@ async function viewLobbyForm(id) {
       title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
       visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt, endsAt,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
-      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null, repeatAhead: fd.get('repeatAhead'),
+      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null, repeatAhead: fd.get('repeatAhead'), questions: questions.get(),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     if (cohostPicker) payload.coHostIds = cohostPicker.get().map((u) => u.id);
@@ -1028,6 +1151,13 @@ async function viewLobby(id) {
   // Recomputed on every render, since actions replace `l` with the server's latest copy.
   let me, full, open;
   const run = (fn) => act(async (e) => { const r = await fn(e); if (r?.lobby) l = r.lobby; render(); });
+  // Answers to the host's questions, kept so a retry (wrong code, joining Discord first) doesn't ask again.
+  let savedAnswers = null;
+  const getAnswers = async (verb) => {
+    if (!l.questions?.length || me.isManager || me.isMember) return {};
+    if (!savedAnswers) savedAnswers = await answerQuestions(l, verb);
+    return savedAnswers;
+  };
 
   /** Subscribe once to a private feed of your dates; later sign-ups show up in the calendar by themselves. */
   function calendarModal(key) {
@@ -1146,7 +1276,14 @@ async function viewLobby(id) {
     if (!me.isManager) return '';
     return `
       ${l.visibility === 'code' ? `<div class="card"><h2>Join code</h2><div class="code-box">${esc(l.code)}</div><p class="hint">Only you and co-hosts can see this. Share it with people you want in.</p><button class="btn sm" id="regen">↻ Regenerate code</button></div>` : ''}
-      ${l.requests?.length ? `<div class="card"><h2>Requests (${l.requests.length})</h2>${l.requests.map((u) => `<div class="inbox-item">${userLine(u, 30)}<div class="row"><button class="btn primary sm" data-approve="${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(u.id)}">Deny</button></div></div>`).join('')}</div>` : ''}
+      ${l.requests?.length ? `<div class="card"><h2>Requests (${l.requests.length})</h2>${l.requests.map((u) => {
+        const resp = (l.responses || []).find((r) => r.user.id === u.id);
+        return `<div class="request-item"><div class="inbox-item">${userLine(u, 30)}<div class="row"><button class="btn primary sm" data-approve="${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(u.id)}">Deny</button></div></div>${l.questions?.length ? answersHtml(l.questions, resp?.answers) : ''}</div>`;
+      }).join('')}</div>` : ''}
+      ${l.questions?.length ? `<div class="card"><h2>Answers${(l.responses || []).filter((r) => r.status === 'member').length ? ` (${(l.responses || []).filter((r) => r.status === 'member').length})` : ''}</h2>
+        <p class="hint" style="margin-top:0">What members said when they joined. Only you and co-hosts can see this.</p>
+        ${(l.responses || []).filter((r) => r.status === 'member').map((r) => `<details class="resp"><summary>${userLine(r.user, 26)}<span class="dim">${esc(fmtDate(r.at))}</span></summary>${answersHtml(l.questions, r.answers)}</details>`).join('') || '<p class="dim" style="margin:0">No answers yet.</p>'}
+      </div>` : ''}
       ${open && l.visibility === 'private' ? `<div class="card"><h2>Invite creators</h2><div id="inv"></div><button class="btn sm" id="send-inv" style="margin-top:10px">Send invites</button>
         ${l.invited?.length ? `<p class="hint" style="margin:14px 0 6px">Invited, not joined yet:</p>${l.invited.map((u) => `<div class="inbox-item">${userLine(u, 26)}<button class="btn ghost sm" data-uninvite="${esc(u.id)}">Revoke</button></div>`).join('')}` : ''}</div>` : ''}
       <div class="card"><h2>Manage</h2><div class="row">
@@ -1214,7 +1351,7 @@ async function viewLobby(id) {
             <h1 class="lobby-title">${esc(l.title)}</h1>
             <div class="meta-row">${l.place ? `<span>📍 ${esc(l.place)}</span>` : ''}${l.recurrence
               ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtRange(l.next.at, l.next.endAt))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
-              : `<span>🗓 ${l.scheduledAt ? esc(fmtRange(l.scheduledAt, l.endsAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
+              : `<span>🗓 ${l.scheduledAt ? esc(fmtRange(l.scheduledAt, l.endsAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.questions?.length ? `<span>📝 ${l.questions.length} question${l.questions.length === 1 ? '' : 's'} to join</span>` : ''}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>
             ${l.description ? `<p class="desc-text" style="margin-top:18px">${esc(l.description)}</p>` : ''}
           </div>
@@ -1233,7 +1370,7 @@ async function viewLobby(id) {
           </div>
         </div>
         <aside class="side-stack">
-          <div class="card">${joinBox()}</div>
+          <div class="card">${joinBox()}${me.answers && l.questions?.length && !me.isManager ? `<details class="resp mine"><summary>Your answers</summary>${answersHtml(l.questions, me.answers)}</details>` : ''}</div>
           ${discordBox()}
           ${managerBox()}
           ${adminBox()}
@@ -1241,13 +1378,18 @@ async function viewLobby(id) {
       </div>`;
 
     const on = (sel, fn) => { const el = document.querySelector(sel); if (el) el.addEventListener('click', run(fn)); };
-    on('#join', () => withServerCheck(async () => {
-      const r = await api('POST', `${base}/join`);
+    on('#join', async () => {
+      const answers = await getAnswers(l.approval && !me.isManager ? 'Send request' : 'Join lobby');
+      if (!answers) return;
+      return joinWith(answers);
+    });
+    const joinWith = (answers) => withServerCheck(async () => {
+      const r = await api('POST', `${base}/join`, { answers });
       l = r.lobby; render();
       toast(r.lobby.me.isMember ? 'Joined!' : 'Request sent');
       refreshInboxCount().then(() => renderNav(currentRoute));
       return r;
-    }));
+    });
     on('#leave', () => api('POST', `${base}/leave`));
     on('#decline', async () => { await api('POST', `${base}/decline-invite`); location.hash = '#/inbox'; });
     on('#sync-discord', async () => {
@@ -1270,12 +1412,17 @@ async function viewLobby(id) {
     document.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/approve/${b.dataset.approve}`))));
     document.querySelectorAll('[data-deny]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/deny/${b.dataset.deny}`))));
     document.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', run(async () => { if (!await askConfirm({ title: 'Remove this person?', message: 'They will be taken out of the lobby and lose access to its Discord channels.', confirmLabel: 'Remove', danger: true })) return; return api('POST', `${base}/kick/${b.dataset.kick}`); })));
-    document.querySelectorAll('[data-signup]').forEach((b) => b.addEventListener('click', run(() => withServerCheck(async () => {
-      const r = await api('POST', `${base}/signup/${b.dataset.signup}`);
+    document.querySelectorAll('[data-signup]').forEach((b) => b.addEventListener('click', run(async () => {
+      const answers = await getAnswers('Sign up');
+      if (!answers) return;
+      return signupWith(b.dataset.signup, answers);
+    })));
+    const signupWith = (key, answers) => withServerCheck(async () => {
+      const r = await api('POST', `${base}/signup/${key}`, { answers });
       toast(r.lobby.me.calendarSynced ? "You're signed up! It'll be added to your calendar." : "You're signed up for that date!");
       l = r.lobby; render();
       return r;
-    }))));
+    });
     document.querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', () => calendarModal(b.dataset.cal)));
     document.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', run(() => api('POST', `${base}/withdraw/${b.dataset.withdraw}`))));
     document.querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', run(async () => {
@@ -1294,7 +1441,9 @@ async function viewLobby(id) {
       e.preventDefault();
       const code = new FormData(codef).get('code');
       try {
-        await withServerCheck(async () => { const r = await api('POST', `${base}/join`, { code }); l = r.lobby; toast('Joined!'); render(); return r; });
+        const answers = await getAnswers('Join lobby');
+        if (!answers) return;
+        await withServerCheck(async () => { const r = await api('POST', `${base}/join`, { code, answers }); l = r.lobby; toast('Joined!'); render(); return r; });
       } catch (err) { toast(err.message, true); }
     });
     const inv = document.getElementById('inv');
@@ -1316,7 +1465,7 @@ async function viewInbox() {
   const section = (title, items, empty) => `<div class="card"><h2>${title}</h2>${items.length ? items.join('') : `<p class="dim" style="margin:0">${empty}</p>`}</div>`;
   $app.innerHTML = `
     <div class="page-head"><div><h1>Inbox</h1><p>Requests and invites waiting on you.</p></div></div>
-    ${section('Join requests for your lobbies', d.approvals.flatMap((a) => a.requests.map((u) => `<div class="inbox-item"><div>${userLine(u, 32)}<div class="hint" style="margin-top:4px">wants to join <a href="#/lobbies/${esc(a.lobby.id)}">${esc(a.lobby.title)}</a></div></div><div class="row"><button class="btn primary sm" data-approve="${esc(a.lobby.id)}|${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(a.lobby.id)}|${esc(u.id)}">Deny</button></div></div>`)), 'No pending requests.')}
+    ${section('Join requests for your lobbies', d.approvals.flatMap((a) => a.requests.map((u) => `<div class="request-item"><div class="inbox-item"><div>${userLine(u, 32)}<div class="hint" style="margin-top:4px">wants to join <a href="#/lobbies/${esc(a.lobby.id)}">${esc(a.lobby.title)}</a></div></div><div class="row"><button class="btn primary sm" data-approve="${esc(a.lobby.id)}|${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(a.lobby.id)}|${esc(u.id)}">Deny</button></div></div>${a.questions?.length ? answersHtml(a.questions, u.answers) : ''}</div>`)), 'No pending requests.')}
     ${section('Lobby invites', d.invites.map((l) => `<div class="inbox-item"><div><a href="#/lobbies/${esc(l.id)}"><strong>${esc(l.title)}</strong></a><div class="hint">from ${esc(l.host?.displayName)} · ${l.memberCount}/${l.maxSlots} · ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'anytime'}</div></div><a class="btn primary sm" href="#/lobbies/${esc(l.id)}">View &amp; join</a></div>`), 'No invites right now.')}
     ${section('Friend requests', d.friendRequests.map((u) => `<div class="inbox-item">${userLine(u, 32)}<div class="row"><button class="btn primary sm" data-faccept="${esc(u.id)}">Accept</button><button class="btn ghost sm" data-fdecline="${esc(u.id)}">Decline</button></div></div>`), 'No friend requests.')}
     ${section('Review requests', d.reviewRequests.map((r) => `<div class="inbox-item"><div>${userLine(r.from, 32)}<div class="hint" style="margin-top:4px">wants a review of what they're like to collab with${r.note ? ` · “${esc(r.note)}”` : ''}</div></div><div class="row"><button class="btn primary sm" data-write="${esc(r.id)}">Write review</button><button class="btn ghost sm" data-rdecline="${esc(r.id)}">No thanks</button></div></div>`), 'No review requests.')}

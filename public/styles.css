@@ -372,6 +372,31 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 .dt-pair { display: grid; grid-template-columns: 1fr 120px; gap: 8px; }
 .cal-btn { display: inline-flex; align-items: center; gap: 6px; }
 .synced { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+.q-list { display: grid; gap: 10px; margin-bottom: 10px; }
+.q-edit { border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); padding: 12px; display: grid; gap: 10px; }
+.q-edit-top { display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center; }
+.q-num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; font-weight: 700; font-size: .8rem; }
+.q-edit-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.q-edit-row select { width: auto; flex: 1 1 200px; }
+.q-req { margin: 0; }
+.q-move { margin-left: auto; display: flex; gap: 4px; }
+.q-fieldset { border: none; padding: 0; margin: 0 0 16px; }
+.q-fieldset legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
+.q-opt { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; cursor: pointer; font-weight: 400; }
+.q-opt:has(input:checked) { border-color: var(--accent); background: rgba(225, 6, 0, .1); }
+.req { color: var(--accent-2); }
+.qa-list { display: grid; gap: 8px; margin-top: 10px; }
+.qa-row { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.qa-q { color: var(--muted); font-size: .82rem; }
+.qa-a { white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.request-item:last-child { border-bottom: none; }
+.request-item > .inbox-item { border: none; padding: 0; }
+.resp { border-top: 1px solid var(--line); padding: 10px 0; }
+.resp summary { cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 10px; list-style: none; }
+.resp summary::-webkit-details-marker { display: none; }
+.resp.mine { margin-top: 14px; }
+.resp.mine summary { color: var(--muted); font-size: .9rem; }
 .cal-options { display: flex; flex-wrap: wrap; gap: 10px; }
 .repeat-box .field { margin-bottom: 10px; }
 .place-line { color: var(--muted); font-size: .85rem; margin-top: 4px; }

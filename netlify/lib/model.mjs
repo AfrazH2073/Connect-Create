@@ -22,6 +22,8 @@ export function normalizeLobby(l) {
   if (!l) return l;
   if (l.visibility === 'approval') { l.visibility = 'public'; l.approval = true; }
   l.approval = l.visibility !== 'code' && l.approval === true;
+  l.questions ||= [];
+  l.answers ||= {};
   return l;
 }
 
@@ -304,3 +306,55 @@ export function syncSessionSchedule(l, nowMs = Date.now()) {
 
 export const nextSession = (l, nowMs = Date.now()) =>
   (l.sessions || []).find((s) => !isPast(s, nowMs) && s.status !== 'skipped') || null;
+
+// ---------- Join questions ----------
+// A host can ask people questions when they join (any lobby type). Answers are
+// only shown to the host and co-hosts, and help them decide on approval.
+
+export const QUESTION_TYPES = ['short', 'long', 'choice', 'multi'];
+export const MAX_QUESTIONS = 10;
+const ANSWER_LIMIT = { short: 200, long: 1000 };
+
+/** Clean the host's question list. Keeps the ids of existing questions so earlier answers still line up. */
+export function cleanQuestions(raw, existing = []) {
+  if (!Array.isArray(raw)) return existing;
+  const known = new Set(existing.map((q) => q.id));
+  const out = [];
+  for (const q of raw.slice(0, MAX_QUESTIONS)) {
+    const label = String(q?.label ?? '').trim().slice(0, 200);
+    if (!label) continue;
+    const type = QUESTION_TYPES.includes(q.type) ? q.type : 'short';
+    const options = ['choice', 'multi'].includes(type)
+      ? [...new Set((Array.isArray(q.options) ? q.options : []).map((o) => String(o ?? '').trim().slice(0, 80)).filter(Boolean))].slice(0, 12)
+      : [];
+    if (options.length < 2 && ['choice', 'multi'].includes(type)) throw new HttpError(400, `"${label}" needs at least 2 options`);
+    const id = typeof q.id === 'string' && known.has(q.id) ? q.id : newId();
+    out.push({ id, label, type, options, required: q.required === true });
+  }
+  return out;
+}
+
+/** Check someone's answers against the questions. Returns { questionId: answer }. */
+export function checkAnswers(questions, raw) {
+  const given = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const q of questions || []) {
+    let v = given[q.id];
+    if (q.type === 'multi') {
+      v = [...new Set((Array.isArray(v) ? v : []).map(String))].filter((o) => q.options.includes(o));
+      if (!v.length) v = null;
+    } else if (q.type === 'choice') {
+      v = q.options.includes(String(v ?? '')) ? String(v) : null;
+    } else {
+      v = String(v ?? '').trim();
+      if (v.length > ANSWER_LIMIT[q.type]) throw new HttpError(400, `Your answer to "${q.label}" is too long`);
+      if (!v) v = null;
+    }
+    if (v === null) {
+      if (q.required) throw new HttpError(400, `Please answer "${q.label}"`, 'ANSWERS_NEEDED');
+      continue;
+    }
+    out[q.id] = v;
+  }
+  return out;
+}

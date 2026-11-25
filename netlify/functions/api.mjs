@@ -9,7 +9,7 @@ import { isAdmin, reportLobbyFlags } from '../lib/reports.mjs';
 import {
   PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
-  repeatKey, validTimeZone, dateKey, aheadOf, DEFAULT_AHEAD, MAX_AHEAD, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
+  cleanQuestions, checkAnswers, repeatKey, validTimeZone, dateKey, aheadOf, DEFAULT_AHEAD, MAX_AHEAD, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -477,7 +477,7 @@ function lobbySummary(l, people) {
   const next = l.recurrence ? nextSession(l) : null;
   return {
     id: l.id, title: l.title, game: l.game, place: l.place || '', description: l.description.slice(0, 220), categories: l.categories,
-    platforms: l.platforms, scheduledAt: l.scheduledAt, endsAt: l.endsAt || null, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
+    platforms: l.platforms, questionCount: (l.questions || []).length, scheduledAt: l.scheduledAt, endsAt: l.endsAt || null, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
     status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
     recurrence: recurrenceView(l),
     next: next ? { key: next.key, at: next.at, endAt: endOf(l, next.at), count: next.memberIds.length } : null,
@@ -521,8 +521,10 @@ function lobbyDetail(l, uid, people) {
       // Private calendar feed of this person's dates (repeating lobbies only)
       calendarSig: uid && l.recurrence && member ? signLink('cal', `${l.id}:${uid}`) : null,
       calendarSynced: !!uid && (people[uid]?.calendarLobbyIds || []).includes(l.id),
+      answers: uid && l.answers?.[uid] ? l.answers[uid].items : null,
     },
     requestCount: l.requestIds.length,
+    questions: l.questions || [],
     sessions: l.recurrence ? sessionsView(l, uid, people, manager, member) : null,
   };
   if (isAdmin(uid)) {
@@ -531,6 +533,12 @@ function lobbyDetail(l, uid, people) {
   if (manager) {
     out.code = l.visibility === 'code' ? l.code : null;
     out.requests = l.requestIds.map((id) => miniUser(people[id])).filter(Boolean);
+    // Everyone's answers to the join questions, for the people still in or waiting
+    out.responses = Object.entries(l.answers || {})
+      .filter(([id]) => l.memberIds.includes(id) || l.requestIds.includes(id))
+      .map(([id, a]) => ({ user: miniUser(people[id]), status: l.requestIds.includes(id) ? 'requested' : 'member', at: a.at, answers: a.items }))
+      .filter((r) => r.user)
+      .sort((x, y) => (x.status === y.status ? y.at.localeCompare(x.at) : x.status === 'requested' ? -1 : 1));
     out.invited = l.invitedIds.map((id) => miniUser(people[id])).filter(Boolean);
   }
   if (member || manager) {
@@ -593,6 +601,8 @@ function readLobbyFields(b, existing) {
     visibility,
     approval,
     recurrence,
+    // Questions people answer when they join (optional, any lobby type)
+    questions: cleanQuestions(b.questions, existing?.questions || []),
   };
 }
 
@@ -765,6 +775,12 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
   };
   const dropFromSessions = (uid) => { for (const s of l.sessions || []) s.memberIds = s.memberIds.filter((x) => x !== uid); };
   const removeFrom = (key, uid) => { l[key] = l[key].filter((x) => x !== uid); };
+  // Answers to the host's join questions (hosts and co-hosts don't answer their own).
+  const takeAnswers = () => {
+    if (!l.questions?.length || manager) return;
+    l.answers[me.id] = { at: now(), items: checkAnswers(l.questions, b.answers) };
+  };
+  const forgetAnswers = (uid) => { if (l.answers) delete l.answers[uid]; };
 
   switch (`${req.method} ${action}`) {
     case 'PUT ': {
@@ -786,10 +802,10 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       if (isMember(l, me.id)) fail(400, "You're already in this lobby");
       if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
       await requireInServer(me);
-      const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
-      if (manager) direct();
+      const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); takeAnswers(); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
+      if (manager) { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); }
       // With approval on, everyone else (invited people and friends too) asks and a host decides.
-      else if (l.approval) { if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
+      else if (l.approval) { takeAnswers(); if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
       else if (l.invitedIds.includes(me.id)) direct();
       else if (l.visibility === 'public') direct();
       else if (l.visibility === 'friends') direct(); // canView already checked friendship
@@ -806,6 +822,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('requestIds', me.id);
       removeFrom('coHostIds', me.id);
       dropFromSessions(me.id);
+      forgetAnswers(me.id);
       break;
     }
     case 'POST approve': {
@@ -820,6 +837,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     case 'POST deny': {
       needManager();
       removeFrom('requestIds', arg);
+      forgetAnswers(arg);
       break;
     }
     case 'POST kick': {
@@ -830,6 +848,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('coHostIds', arg);
       removeFrom('invitedIds', arg);
       dropFromSessions(arg);
+      forgetAnswers(arg);
       break;
     }
     case 'POST signup': {
@@ -850,7 +869,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       }
       await requireInServer(me);
       if (s.memberIds.length >= l.maxSlots) fail(400, 'That date is full');
-      if (!isMember(l, me.id)) { l.memberIds.push(me.id); removeFrom('invitedIds', me.id); removeFrom('requestIds', me.id); }
+      if (!isMember(l, me.id)) { takeAnswers(); l.memberIds.push(me.id); removeFrom('invitedIds', me.id); removeFrom('requestIds', me.id); }
       s.memberIds.push(me.id);
       break;
     }
@@ -964,7 +983,11 @@ async function inbox(ctx) {
   return json({
     friendRequests: me.friendRequestsIn.map((id) => publicUser(people[id])).filter(Boolean),
     invites: invites.map((l) => lobbySummary(l, people)),
-    approvals: approvals.map((l) => ({ lobby: lobbySummary(l, people), requests: l.requestIds.map((id) => miniUser(people[id])).filter(Boolean) })),
+    approvals: approvals.map((l) => ({
+      lobby: lobbySummary(l, people),
+      questions: l.questions || [],
+      requests: l.requestIds.map((id) => people[id] && { ...miniUser(people[id]), answers: l.answers?.[id]?.items || null }).filter(Boolean),
+    })),
     tags: tags.map((c) => clipView(c, people)),
     reviewRequests: reviewRequests.map((r) => ({ id: r.id, note: r.note, createdAt: r.createdAt, from: publicUser(people[r.subjectId]) })).filter((r) => r.from),
     newReviews: newReviews.map((r) => reviewView(r, people, true)),
