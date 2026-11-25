@@ -380,6 +380,15 @@ h2 { font-size: 1.3rem; margin: 0 0 14px; }
 .q-edit-row select { width: auto; flex: 1 1 200px; }
 .q-req { margin: 0; }
 .q-move { margin-left: auto; display: flex; gap: 4px; }
+.q-opts { display: grid; gap: 6px; padding-left: 36px; }
+.q-opt-edit { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; }
+.q-opt-edit .q-opt-input { padding: 8px 10px; }
+.q-mark { width: 16px; height: 16px; border: 2px solid var(--muted); border-radius: 50%; }
+.q-opts.is-multi .q-mark { border-radius: 4px; }
+.q-opt-add { display: inline-flex; align-items: center; gap: 10px; justify-self: start; background: none; border: none; color: var(--muted); font: inherit; cursor: pointer; padding: 6px 0; }
+.q-opt-add:hover { color: var(--text); }
+.q-plus { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 700; line-height: 1; }
+@media (max-width: 600px) { .q-opts { padding-left: 0; } }
 .q-fieldset { border: none; padding: 0; margin: 0 0 16px; }
 .q-fieldset legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 .q-opt { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; cursor: pointer; font-weight: 400; }

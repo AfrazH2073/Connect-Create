@@ -899,9 +899,22 @@ function addClipModal() {
 const Q_TYPES = { short: 'Short answer', long: 'Paragraph', choice: 'Multiple choice (pick one)', multi: 'Checkboxes (pick any)' };
 const MAX_Q = 10;
 
+const MAX_OPTS = 12;
+const isChoice = (t) => t === 'choice' || t === 'multi';
+
 /** The host's question builder. get() returns the questions to save. */
 function questionEditor(list, addBtn, initial) {
   let qs = initial.map((q) => ({ ...q, options: [...(q.options || [])] }));
+  const optionsHtml = (q, i) => `
+    <div class="q-opts ${q.type === 'multi' ? 'is-multi' : ''}">
+      ${q.options.map((o, j) => `
+        <div class="q-opt-edit" data-j="${j}">
+          <span class="q-mark" aria-hidden="true"></span>
+          <input type="text" class="q-opt-input" maxlength="80" placeholder="Option ${j + 1}" value="${esc(o)}" aria-label="Question ${i + 1}, option ${j + 1}" />
+          <button type="button" class="btn ghost sm q-opt-del" ${q.options.length <= 2 ? 'disabled' : ''} aria-label="Remove option ${j + 1}">✕</button>
+        </div>`).join('')}
+      ${q.options.length < MAX_OPTS ? `<button type="button" class="q-opt-add"><span class="q-plus" aria-hidden="true">+</span> Add option</button>` : ''}
+    </div>`;
   const draw = () => {
     list.innerHTML = qs.map((q, i) => `
       <div class="q-edit" data-i="${i}">
@@ -915,7 +928,7 @@ function questionEditor(list, addBtn, initial) {
           <label class="check q-req"><input type="checkbox" class="q-required" ${q.required ? 'checked' : ''} /> <span>Required</span></label>
           <span class="q-move"><button type="button" class="btn ghost sm q-up" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="btn ghost sm q-down" ${i === qs.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></span>
         </div>
-        ${['choice', 'multi'].includes(q.type) ? `<textarea class="q-options" rows="3" placeholder="One option per line (at least 2)" aria-label="Options">${esc(q.options.join('\n'))}</textarea>` : ''}
+        ${isChoice(q.type) ? optionsHtml(q, i) : ''}
       </div>`).join('');
     addBtn.hidden = qs.length >= MAX_Q;
   };
@@ -925,21 +938,67 @@ function questionEditor(list, addBtn, initial) {
       q.label = el.querySelector('.q-label').value;
       q.type = el.querySelector('.q-type').value;
       q.required = el.querySelector('.q-required').checked;
-      const opts = el.querySelector('.q-options');
-      if (opts) q.options = opts.value.split('\n').map((o) => o.trim()).filter(Boolean);
+      if (el.querySelector('.q-opts')) q.options = [...el.querySelectorAll('.q-opt-input')].map((x) => x.value);
     });
   };
-  list.addEventListener('change', (e) => { read(); if (e.target.classList.contains('q-type')) draw(); });
+  const focusOpt = (i, j) => {
+    const input = list.querySelector(`.q-edit[data-i="${i}"] .q-opt-edit[data-j="${j}"] .q-opt-input`);
+    input?.focus();
+  };
+  const addOption = (i, at) => {
+    const q = qs[i];
+    if (q.options.length >= MAX_OPTS) return;
+    const j = at ?? q.options.length;
+    q.options.splice(j, 0, '');
+    draw();
+    focusOpt(i, j);
+  };
+  list.addEventListener('change', (e) => {
+    read();
+    if (e.target.classList.contains('q-type')) {
+      const q = qs[+e.target.closest('.q-edit').dataset.i];
+      if (isChoice(q.type)) while (q.options.length < 2) q.options.push('');
+      draw();
+    }
+  });
   list.addEventListener('click', (e) => {
     const el = e.target.closest('.q-edit');
     if (!el) return;
-    read();
     const i = +el.dataset.i;
+    if (e.target.closest('.q-opt-add')) { read(); addOption(i); return; }
+    const optDel = e.target.closest('.q-opt-del');
+    if (optDel) {
+      read();
+      const j = +optDel.closest('.q-opt-edit').dataset.j;
+      if (qs[i].options.length > 2) qs[i].options.splice(j, 1);
+      draw();
+      focusOpt(i, Math.max(0, j - 1));
+      return;
+    }
+    read();
     if (e.target.closest('.q-del')) qs.splice(i, 1);
     else if (e.target.closest('.q-up') && i > 0) [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]];
     else if (e.target.closest('.q-down') && i < qs.length - 1) [qs[i + 1], qs[i]] = [qs[i], qs[i + 1]];
     else return;
     draw();
+  });
+  // Enter in an option adds the next one; Backspace in an empty one removes it.
+  list.addEventListener('keydown', (e) => {
+    if (!e.target.classList.contains('q-opt-input')) return;
+    const i = +e.target.closest('.q-edit').dataset.i;
+    const j = +e.target.closest('.q-opt-edit').dataset.j;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      read();
+      if (qs[i].options[j + 1] === '') focusOpt(i, j + 1);
+      else addOption(i, j + 1);
+    } else if (e.key === 'Backspace' && !e.target.value && qs[i].options.length > 2) {
+      e.preventDefault();
+      read();
+      qs[i].options.splice(j, 1);
+      draw();
+      focusOpt(i, Math.max(0, j - 1));
+    }
   });
   addBtn.addEventListener('click', () => {
     read();
@@ -948,7 +1007,13 @@ function questionEditor(list, addBtn, initial) {
     list.querySelector('.q-edit:last-child .q-label')?.focus();
   });
   draw();
-  return { get: () => { read(); return qs.filter((q) => q.label.trim()); } };
+  return {
+    get: () => {
+      read();
+      return qs.filter((q) => q.label.trim())
+        .map((q) => ({ ...q, options: isChoice(q.type) ? q.options.map((o) => o.trim()).filter(Boolean) : [] }));
+    },
+  };
 }
 
 /**
