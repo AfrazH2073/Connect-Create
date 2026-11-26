@@ -10,6 +10,7 @@ import {
   PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
   cleanQuestions, checkAnswers, repeatKey, validTimeZone, dateKey, aheadOf, DEFAULT_AHEAD, MAX_AHEAD, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
+  isWaitlisted, hasVoted, fillFromWaitlist, cleanPoll, checkVote, countedVotes, pollTally, pollDue, pollWinner, decidePoll,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -477,8 +478,13 @@ function lobbySummary(l, people) {
   const next = l.recurrence ? nextSession(l) : null;
   return {
     id: l.id, title: l.title, game: l.game, place: l.place || '', description: l.description.slice(0, 220), categories: l.categories,
-    platforms: l.platforms, questionCount: (l.questions || []).length, scheduledAt: l.scheduledAt, endsAt: l.endsAt || null, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
-    status: l.status, memberCount: l.memberIds.length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
+    platforms: l.platforms, questionCount: (l.questions || []).length, scheduledAt: l.scheduledAt, endsAt: l.endsAt || null, day: l.day || null, maxSlots: l.maxSlots, visibility: l.visibility, approval: !!l.approval,
+    status: l.status, memberCount: l.memberIds.length, waitlistCount: (l.waitlist || []).length, host: miniUser(people[l.hostId]), createdAt: l.createdAt,
+    poll: l.poll ? {
+      decided: !!l.poll.decidedId, optionCount: l.poll.options.length, responses: countedVotes(l).length,
+      decide: l.poll.decide, target: l.poll.target, closesAt: l.poll.closesAt,
+      dates: l.poll.options.map((o) => ({ date: o.date, start: o.start })),
+    } : null,
     recurrence: recurrenceView(l),
     next: next ? { key: next.key, at: next.at, endAt: endOf(l, next.at), count: next.memberIds.length } : null,
   };
@@ -494,15 +500,37 @@ function sessionsView(l, uid, people, manager, member) {
     .filter((s) => !isPast(s, nowMs) || ((member || manager) && s.discord?.textId && !s.discord.deletedAt))
     .map((s) => {
       const signedUp = !!uid && s.memberIds.includes(uid);
+      const wl = s.waitlist || [];
       const room = s.discord || {};
       const links = (signedUp || manager) && room.textId && !room.deletedAt;
       return {
         key: s.key, at: s.at, endAt: endOf(l, s.at), past: isPast(s, nowMs), skipped: s.status === 'skipped',
         count: s.memberIds.length, signedUp,
+        waitlistCount: wl.length, waitlistPos: uid && wl.includes(uid) ? wl.indexOf(uid) + 1 : null,
         members: s.memberIds.map((id) => miniUser(people[id])).filter(Boolean),
         discord: links ? { textUrl: guildChannelUrl(room.textId), voiceUrl: room.voiceId ? guildChannelUrl(room.voiceId) : null } : null,
       };
     });
+}
+
+/** The date poll: totals for everyone, and who said what for hosts. */
+function pollView(l, people, manager) {
+  const p = l.poll;
+  const out = {
+    decide: p.decide, target: p.target, closesAt: p.closesAt,
+    decidedId: p.decidedId || null, decidedAt: p.decidedAt || null, auto: p.decidedBy === 'auto',
+    responses: countedVotes(l).length,
+    options: pollTally(l),
+    leader: p.decidedId ? null : pollWinner(l)?.id || null,
+    stalled: pollDue(l) && !pollWinner(l),
+  };
+  if (manager) {
+    out.votes = Object.entries(p.votes)
+      .map(([id, v]) => ({ user: miniUser(people[id]), at: v.at, picks: v.picks, pending: l.requestIds.includes(id) }))
+      .filter((v) => v.user)
+      .sort((a, b) => a.at.localeCompare(b.at));
+  }
+  return out;
 }
 
 function lobbyDetail(l, uid, people) {
@@ -522,7 +550,11 @@ function lobbyDetail(l, uid, people) {
       calendarSig: uid && l.recurrence && member ? signLink('cal', `${l.id}:${uid}`) : null,
       calendarSynced: !!uid && (people[uid]?.calendarLobbyIds || []).includes(l.id),
       answers: uid && l.answers?.[uid] ? l.answers[uid].items : null,
+      waitlistPos: isWaitlisted(l, uid) ? l.waitlist.indexOf(uid) + 1 : null,
+      vote: hasVoted(l, uid) ? l.poll.votes[uid].picks : null,
     },
+    waitlist: (l.waitlist || []).map((id) => miniUser(people[id])).filter(Boolean),
+    poll: l.poll ? pollView(l, people, manager) : null,
     requestCount: l.requestIds.length,
     questions: l.questions || [],
     sessions: l.recurrence ? sessionsView(l, uid, people, manager, member) : null,
@@ -535,8 +567,11 @@ function lobbyDetail(l, uid, people) {
     out.requests = l.requestIds.map((id) => miniUser(people[id])).filter(Boolean);
     // Everyone's answers to the join questions, for the people still in or waiting
     out.responses = Object.entries(l.answers || {})
-      .filter(([id]) => l.memberIds.includes(id) || l.requestIds.includes(id))
-      .map(([id, a]) => ({ user: miniUser(people[id]), status: l.requestIds.includes(id) ? 'requested' : 'member', at: a.at, answers: a.items }))
+      .filter(([id]) => l.memberIds.includes(id) || l.requestIds.includes(id) || isWaitlisted(l, id) || hasVoted(l, id))
+      .map(([id, a]) => ({
+        user: miniUser(people[id]), at: a.at, answers: a.items,
+        status: l.requestIds.includes(id) ? 'requested' : l.memberIds.includes(id) ? 'member' : isWaitlisted(l, id) ? 'waitlist' : 'voted',
+      }))
       .filter((r) => r.user)
       .sort((x, y) => (x.status === y.status ? y.at.localeCompare(x.at) : x.status === 'requested' ? -1 : 1));
     out.invited = l.invitedIds.map((id) => miniUser(people[id])).filter(Boolean);
@@ -562,9 +597,17 @@ function readLobbyFields(b, existing) {
   const visibility = legacyApproval ? 'public' : VISIBILITIES.includes(b.visibility) ? b.visibility : existing?.visibility || 'public';
   const approval = visibility !== 'code' && (legacyApproval || (b.approval !== undefined ? b.approval === true : !!existing?.approval));
   const maxSlots = Math.max(2, Math.min(100, parseInt(b.maxSlots, 10) || existing?.maxSlots || 4));
-  const scheduledAt = b.scheduledAt ? snapTo5Min(b.scheduledAt) : null;
+  // A date poll replaces the start time until a date is picked from it.
+  const decided = existing?.poll?.decidedId;
+  const usePoll = !decided && (b.schedule !== undefined ? b.schedule === 'poll' : !!existing?.poll);
+  if (existing?.poll && !decided && !usePoll && Object.keys(existing.poll.votes).length) {
+    fail(400, 'People already answered the date poll. Pick one of its dates instead of switching to a set time.');
+  }
+  const scheduledAt = !usePoll && b.scheduledAt ? snapTo5Min(b.scheduledAt) : null;
   // Optional expected end time. For repeating lobbies it sets how long every date lasts.
-  const endsAt = b.endsAt ? snapTo5Min(b.endsAt) : null;
+  const endsAt = !usePoll && b.endsAt ? snapTo5Min(b.endsAt) : null;
+  // A date with no time yet (e.g. picked from a poll option without a time)
+  const day = !usePoll && !scheduledAt && /^\d{4}-\d{2}-\d{2}$/.test(b.day || '') ? b.day : null;
   if (endsAt) {
     if (!scheduledAt) fail(400, 'Pick a start time before an end time');
     if (endsAt <= scheduledAt) fail(400, 'The end time has to be after the start time');
@@ -582,6 +625,7 @@ function readLobbyFields(b, existing) {
       ahead: Math.max(1, Math.min(MAX_AHEAD, parseInt(b.repeatAhead, 10) || existing?.recurrence?.ahead || DEFAULT_AHEAD)),
     } : null;
   }
+  if (recurrence && usePoll) fail(400, "A repeating lobby can't use a date poll. Pick the first date instead.");
   if (recurrence) {
     if (!scheduledAt) fail(400, 'Pick the date and time of the first session for a repeating lobby');
     if (recurrence.until && recurrence.until < dateKey(scheduledAt, recurrence.timeZone)) fail(400, '"Repeat until" is before the first session');
@@ -597,6 +641,8 @@ function readLobbyFields(b, existing) {
     platforms: pick(b.platforms, LOBBY_PLATFORMS),
     scheduledAt,
     endsAt,
+    day,
+    poll: usePoll ? cleanPoll(b.poll ?? existing?.poll, existing?.poll, maxSlots) : decided ? existing.poll : null,
     maxSlots,
     visibility,
     approval,
@@ -661,6 +707,7 @@ async function calendarFeed(req, lobbyId, uid, file) {
 async function renderLobby(ctx, l) {
   const people = await usersById([
     l.hostId, ...l.coHostIds, ...l.memberIds, ...l.requestIds, ...l.invitedIds, ...(l.discord?.failedIds || []),
+    ...(l.waitlist || []), ...Object.keys(l.poll?.votes || {}),
     ...(l.sessions || []).flatMap((s) => s.memberIds),
     ...(l.flags || []).flatMap((f) => [f.userId, f.by]),
   ]);
@@ -676,7 +723,7 @@ async function listLobbies(ctx, url) {
   const all = await db.lobbies.all();
   const hosts = await usersById(all.map((l) => l.hostId));
   let lobbies = all.filter((l) => canView(l, ctx.uid, hosts[l.hostId]));
-  if (mine) lobbies = lobbies.filter((l) => isMember(l, ctx.uid) || isManager(l, ctx.uid) || l.requestIds.includes(ctx.uid));
+  if (mine) lobbies = lobbies.filter((l) => isMember(l, ctx.uid) || isManager(l, ctx.uid) || l.requestIds.includes(ctx.uid) || isWaitlisted(l, ctx.uid) || hasVoted(l, ctx.uid));
   else lobbies = lobbies.filter((l) => l.status === status);
   if (q) lobbies = lobbies.filter((l) => [l.title, l.game, l.place, l.description].join(' ').toLowerCase().includes(q));
   if (cat) lobbies = lobbies.filter((l) => l.categories.includes(cat));
@@ -688,7 +735,7 @@ async function listLobbies(ctx, url) {
   const appr = url.searchParams.get('approval');
   if (appr === '1' || appr === '0') lobbies = lobbies.filter((l) => !!l.approval === (appr === '1'));
   for (const l of lobbies) syncSessionSchedule(l); // in memory only: so "next date" is current
-  const when = (l) => (l.recurrence && nextSession(l)?.at) || l.scheduledAt || l.createdAt;
+  const when = (l) => (l.recurrence && nextSession(l)?.at) || l.scheduledAt || l.day || l.poll?.options[0]?.start || l.poll?.options[0]?.date || l.createdAt;
   lobbies.sort((a, b) => when(a).localeCompare(when(b)));
   return json({ lobbies: lobbies.slice(0, 200).map((l) => lobbySummary(l, hosts)) });
 }
@@ -751,6 +798,15 @@ async function createLobby(ctx, req, b) {
 
 async function lobbyAction(ctx, req, id, action, arg, b) {
   const { l, host } = await loadLobby(ctx, id);
+  // A poll whose closing time passed picks its date on the next visit (the hourly cleanup does it too).
+  if (pollDue(l)) {
+    const w = pollWinner(l);
+    if (w) {
+      decidePoll(l, w.id, 'auto');
+      if (action === '' && req.method === 'GET') return saveAndRespond(ctx, req, l);
+    }
+    // nobody said Yes to anything: the host picks (pollView shows it as stalled)
+  }
   if (action === '' && req.method === 'GET') {
     if (l.recurrence && l.status === 'open') {
       const before = JSON.stringify(l.sessions);
@@ -773,7 +829,9 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     if (!s) fail(404, 'That date is not on the schedule');
     return s;
   };
-  const dropFromSessions = (uid) => { for (const s of l.sessions || []) s.memberIds = s.memberIds.filter((x) => x !== uid); };
+  const dropFromSessions = (uid) => {
+    for (const s of l.sessions || []) { s.memberIds = s.memberIds.filter((x) => x !== uid); s.waitlist = (s.waitlist || []).filter((x) => x !== uid); }
+  };
   const removeFrom = (key, uid) => { l[key] = l[key].filter((x) => x !== uid); };
   // Answers to the host's join questions (hosts and co-hosts don't answer their own).
   const takeAnswers = () => {
@@ -781,6 +839,19 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     l.answers[me.id] = { at: now(), items: checkAnswers(l.questions, b.answers) };
   };
   const forgetAnswers = (uid) => { if (l.answers) delete l.answers[uid]; };
+  const polling = () => !!l.poll && !l.poll.decidedId;
+  // Yes / Maybe / No for each poll date. Your place in line is from your first answer.
+  const takeVote = () => {
+    const picks = checkVote(l.poll, b.vote);
+    l.poll.votes[me.id] = { at: l.poll.votes[me.id]?.at || now(), picks };
+  };
+  const forgetVote = (uid) => { if (l.poll) delete l.poll.votes[uid]; };
+  // Into the lobby, or onto the waitlist when it's full.
+  const seat = (uid) => {
+    removeFrom('requestIds', uid);
+    if (l.memberIds.includes(uid) || l.waitlist.includes(uid)) return;
+    if (hasRoom()) { l.memberIds.push(uid); removeFrom('invitedIds', uid); } else l.waitlist.push(uid);
+  };
 
   switch (`${req.method} ${action}`) {
     case 'PUT ': {
@@ -797,15 +868,30 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       if (isHost && Array.isArray(b.coHostIds)) l.coHostIds = idList(b.coHostIds, 5).filter((x) => x !== l.hostId);
       break;
     }
+    case 'POST pick': {
+      // The host picks the date from the poll (any time before it picks itself).
+      needManager(); needOpen();
+      if (!polling()) fail(400, l.poll ? 'A date was already picked' : "This lobby doesn't have a date poll");
+      decidePoll(l, arg, me.id);
+      break;
+    }
     case 'POST join': {
       needOpen();
       if (isMember(l, me.id)) fail(400, "You're already in this lobby");
+      if (isWaitlisted(l, me.id)) fail(400, "You're already on the waitlist");
       if (!me.onboarded) fail(400, 'Finish your profile before joining lobbies');
-      await requireInServer(me);
-      const direct = () => { if (!hasRoom()) fail(400, 'Lobby is full'); takeAnswers(); l.memberIds.push(me.id); removeFrom('requestIds', me.id); };
-      if (manager) { if (!hasRoom()) fail(400, 'Lobby is full'); l.memberIds.push(me.id); removeFrom('requestIds', me.id); }
+      const changingVote = polling() && hasVoted(l, me.id);
+      if (!changingVote) await requireInServer(me);
+      // While a date poll is open, "joining" means answering it; spots are handed out once a date is picked.
+      const direct = () => {
+        takeAnswers();
+        if (polling()) { takeVote(); removeFrom('invitedIds', me.id); return; }
+        seat(me.id);
+      };
+      if (changingVote) takeVote();
+      else if (manager) { if (polling()) takeVote(); else seat(me.id); }
       // With approval on, everyone else (invited people and friends too) asks and a host decides.
-      else if (l.approval) { takeAnswers(); if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
+      else if (l.approval) { takeAnswers(); if (polling()) takeVote(); if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
       else if (l.invitedIds.includes(me.id)) direct();
       else if (l.visibility === 'public') direct();
       else if (l.visibility === 'friends') direct(); // canView already checked friendship
@@ -821,23 +907,25 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('memberIds', me.id);
       removeFrom('requestIds', me.id);
       removeFrom('coHostIds', me.id);
+      removeFrom('waitlist', me.id);
       dropFromSessions(me.id);
       forgetAnswers(me.id);
+      forgetVote(me.id);
       break;
     }
     case 'POST approve': {
       needManager(); needOpen();
       if (!l.requestIds.includes(arg)) fail(404, 'No such request');
-      if (!hasRoom()) fail(400, 'Lobby is full — raise the slot count first');
-      removeFrom('requestIds', arg);
       removeFrom('invitedIds', arg);
-      l.memberIds.push(arg);
+      // During a poll their answers start counting; otherwise they get a spot, or the waitlist if it's full.
+      if (polling() || l.recurrence) { removeFrom('requestIds', arg); if (l.recurrence) l.memberIds.push(arg); } else seat(arg);
       break;
     }
     case 'POST deny': {
       needManager();
       removeFrom('requestIds', arg);
       forgetAnswers(arg);
+      forgetVote(arg);
       break;
     }
     case 'POST kick': {
@@ -847,8 +935,10 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
       removeFrom('memberIds', arg);
       removeFrom('coHostIds', arg);
       removeFrom('invitedIds', arg);
+      removeFrom('waitlist', arg);
       dropFromSessions(arg);
       forgetAnswers(arg);
+      forgetVote(arg);
       break;
     }
     case 'POST signup': {
@@ -868,9 +958,11 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
         }
       }
       await requireInServer(me);
-      if (s.memberIds.length >= l.maxSlots) fail(400, 'That date is full');
+      if (s.waitlist.includes(me.id)) fail(400, "You're already on the waitlist for that date");
       if (!isMember(l, me.id)) { takeAnswers(); l.memberIds.push(me.id); removeFrom('invitedIds', me.id); removeFrom('requestIds', me.id); }
-      s.memberIds.push(me.id);
+      // A full date puts you on its waitlist; you're moved in when someone drops out.
+      if (s.memberIds.length >= l.maxSlots) s.waitlist.push(me.id);
+      else s.memberIds.push(me.id);
       break;
     }
     case 'POST calendar': {
@@ -883,6 +975,7 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     case 'POST withdraw': {
       const s = session();
       s.memberIds = s.memberIds.filter((x) => x !== me.id);
+      s.waitlist = s.waitlist.filter((x) => x !== me.id);
       break;
     }
     case 'POST skip': {
@@ -962,6 +1055,8 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
     default:
       fail(404, 'Unknown lobby action');
   }
+  if (pollDue(l)) { const w = pollWinner(l); if (w) decidePoll(l, w.id, 'auto'); }
+  fillFromWaitlist(l); // someone left, slots went up, or a date was picked
   return saveAndRespond(ctx, req, l);
 }
 

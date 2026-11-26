@@ -4,10 +4,11 @@
 //  - moves channels made before per-lobby categories into the lobby's own category
 //  - for repeating lobbies: opens the next dates for sign-up, and deletes each date's
 //    channels 14 days after that date (or right away if the host skipped it)
+//  - date polls with a closing time: picks the date once it passes
 
 import { db } from '../lib/db.mjs';
-import { deleteLobbyChannels, deleteRoom, hasChannels, moveIntoOwnCategory } from '../lib/discord.mjs';
-import { syncSessionSchedule } from '../lib/model.mjs';
+import { deleteLobbyChannels, deleteRoom, hasChannels, moveIntoOwnCategory, syncLobbyChannels } from '../lib/discord.mjs';
+import { syncSessionSchedule, pollDue, pollWinner, decidePoll } from '../lib/model.mjs';
 import { reportLobbyFlags } from '../lib/reports.mjs';
 
 const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000;
@@ -18,6 +19,13 @@ export async function runCleanup(nowMs = Date.now()) {
   for (const l of lobbies) {
     const before = JSON.stringify(l);
     try {
+      if (pollDue(l, nowMs)) {
+        const w = pollWinner(l);
+        if (w) {
+          decidePoll(l, w.id, 'auto');
+          await syncLobbyChannels(l, (process.env.SITE_URL || process.env.URL || '').replace(/\/$/, ''));
+        }
+      }
       if (l.recurrence) {
         for (const s of syncSessionSchedule(l, nowMs)) await deleteRoom(s.discord);
         for (const s of l.sessions || []) {

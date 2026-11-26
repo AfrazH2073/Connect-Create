@@ -62,10 +62,17 @@ const timeSelect = (id, name, selected, label) => `<select id="${id}" name="${na
 /** A Google Calendar "add event" link. With no end time the event is an hour long. */
 function googleCalendarUrl(l, start, end, discordUrl) {
   const stamp = (iso) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const finish = end || new Date(Date.parse(start) + 3600e3).toISOString();
   const page = `${location.origin}/#/lobbies/${l.id}`;
   const details = [l.game, `Create & Connect lobby: ${page}`, discordUrl ? `Discord chat: ${discordUrl}` : ''].filter(Boolean).join('\n');
-  const q = new URLSearchParams({ action: 'TEMPLATE', text: l.title, dates: `${stamp(start)}/${stamp(finish)}`, details });
+  let dates;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    // A date with no time yet: an all-day event
+    const next = new Date(`${start}T12:00:00`); next.setDate(next.getDate() + 1);
+    dates = `${start.replace(/-/g, '')}/${next.getFullYear()}${pad2(next.getMonth() + 1)}${pad2(next.getDate())}`;
+  } else {
+    dates = `${stamp(start)}/${stamp(end || new Date(Date.parse(start) + 3600e3).toISOString())}`;
+  }
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: l.title, dates, details });
   if (l.place) q.set('location', l.place);
   return `https://calendar.google.com/calendar/render?${q}`;
 }
@@ -117,6 +124,15 @@ const REPEAT = {
 const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: 'long' });
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 const fmtKey = (key) => new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** "Friday, December 4" (long) or "Fri, Dec 4" for a "YYYY-MM-DD" date. */
+const fmtDayKey = (key, long = true) => new Date(`${key}T12:00:00`).toLocaleDateString(undefined, long ? { weekday: 'long', month: 'long', day: 'numeric' } : { weekday: 'short', month: 'short', day: 'numeric' });
+/** A date poll option: its date, plus its time if it has one. */
+const pollOptText = (o, long = true) => o.start
+  ? `${new Date(o.start).toLocaleDateString(undefined, long ? { weekday: 'long', month: 'long', day: 'numeric' } : { weekday: 'short', month: 'short', day: 'numeric' })} · ${fmtTime(o.start)}${o.end ? ` – ${fmtTime(o.end)}` : ''}`
+  : fmtDayKey(o.date, long);
+/** When a one-time lobby happens: a time, a date with no time yet, or nothing. */
+const whenText = (l) => (l.scheduledAt ? fmtRange(l.scheduledAt, l.endsAt) : l.day ? `${fmtDayKey(l.day)} (time TBD)` : '');
+const pollOpen = (l) => !!l.poll && !l.poll.decided && !l.poll.decidedId;
 const repeatText = (r) => r ? `${REPEAT[r.repeat] || 'Repeats'}${r.until ? ` until ${fmtKey(r.until)}` : ''}` : '';
 
 const avatar = (u, size = 34) => `<img class="avatar" src="${esc(u?.avatar)}" alt="" width="${size}" height="${size}" loading="lazy" />`;
@@ -325,9 +341,11 @@ function lobbyCard(l) {
   // Repeating lobbies show the next date and how many signed up for it.
   const count = l.recurrence ? (l.next?.count ?? 0) : l.memberCount;
   const pct = Math.round((count / l.maxSlots) * 100);
-  const when = l.recurrence ? (l.next ? fmtDate(l.next.at) : 'No upcoming dates') : l.scheduledAt ? fmtDate(l.scheduledAt) : '';
+  const when = l.recurrence ? (l.next ? fmtDate(l.next.at) : 'No upcoming dates')
+    : pollOpen(l) ? `Vote: ${l.poll.dates.slice(0, 2).map((o) => pollOptText(o, false).split(' · ')[0]).join(', ')}${l.poll.dates.length > 2 ? ` +${l.poll.dates.length - 2}` : ''}`
+    : l.scheduledAt ? fmtDate(l.scheduledAt) : l.day ? fmtDayKey(l.day, false) : '';
   return `<a class="card lobby-card" href="#/lobbies/${esc(l.id)}">
-    <div class="row" style="justify-content:space-between"><span class="row" style="gap:6px">${visTag(l.visibility, l.approval)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}</span><span class="dim" style="font-size:.85rem">${when ? '🗓 ' + esc(when) : 'Anytime'}</span></div>
+    <div class="row" style="justify-content:space-between"><span class="row" style="gap:6px">${visTag(l.visibility, l.approval)}${l.status === 'completed' ? '<span class="tag completed">Completed</span>' : ''}</span><span class="dim" style="font-size:.85rem">${when ? (pollOpen(l) ? '🗳 ' : '🗓 ') + esc(when) : 'Anytime'}</span></div>
     <div>${l.game ? `<div class="game">${esc(l.game)}</div>` : ''}<h3>${esc(l.title)}</h3>${l.place ? `<div class="place-line">📍 ${esc(l.place)}</div>` : ''}${l.recurrence ? `<div class="repeat-line">🔁 ${esc(repeatText(l.recurrence))}</div>` : ''}</div>
     ${l.description ? `<p class="desc">${esc(l.description)}</p>` : ''}
     <div class="chips">${platformChips(l.platforms)}${catChips(l.categories)}</div>
@@ -452,6 +470,8 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
         ${faq('What can other people see about me?', 'Your profile: name, picture, bio, pronouns, the links you added, your Discord username, collab videos, the reviews you chose to show, and your collab history if you turned it on.')}
         ${faq('Who can see a lobby\'s Discord channels?', 'Only people in that lobby (or, for repeating lobbies, signed up for that date), plus the server\'s admins.')}
         ${faq('What happens to the channels afterwards?', 'They\'re deleted two weeks after the host marks the lobby completed, or right away if the lobby is cancelled. For repeating lobbies, each date\'s channels go two weeks after that date.')}
+        ${faq("What if I don't know the date yet?", "Use a date poll. Offer a few dates (times are optional), and people say Yes, Maybe or No to each when they join. Pick the date yourself, or let it pick the most popular one once enough people answer or at a set time. Whoever said Yes first gets the spots.")}
+        ${faq('What happens when a lobby is full?', "You join the waitlist. When someone leaves, or the host adds spots, the first person in line gets in automatically and is added to the Discord channels.")}
         ${faq('Can I ask people questions before they join?', 'Yes. Add up to 10 questions to any lobby, like short answers, multiple choice or checkboxes. Everyone answers before joining, and only you and your co-hosts see the answers. With Needs approval on, the answers sit right next to each request so you can decide.')}
         ${faq('Can I host with someone else?', 'Yes. Add up to five co-hosts. They can edit the lobby, approve requests, invite people, and see the join code.')}
         ${faq('Someone was a problem in my lobby. What do I do?', 'When you mark the lobby completed, tick the person and say what happened. It goes privately to the server admins. The person isn\'t told who flagged them.')}
@@ -1016,6 +1036,39 @@ function questionEditor(list, addBtn, initial) {
   };
 }
 
+const VOTE_LABEL = { yes: 'Yes', maybe: 'Maybe', no: 'No' };
+
+/** Yes / Maybe / No for each date of the poll. Resolves { optionId: choice }, or null if closed. */
+function pollVoteModal(l, verb, initial) {
+  return new Promise((resolve) => {
+    let done = null;
+    const spots = Math.max(1, l.maxSlots - 1);
+    const { el, close } = openModal(`
+      <div class="modal-head"><h2>When can you make it?</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
+      <p class="hint" style="margin:0 0 16px">Say Yes, Maybe or No for each date. When the date is picked, people who said Yes get the ${spots} spot${spots === 1 ? '' : 's'} in the order they answered, then Maybes; everyone else who said Yes or Maybe goes on the waitlist.</p>
+      <form id="pv">
+        ${l.poll.options.map((o) => `<div class="vote-row">
+          <div class="vote-when">${esc(pollOptText(o))}</div>
+          <div class="vote-seg" role="radiogroup" aria-label="${esc(pollOptText(o))}">${Object.entries(VOTE_LABEL).map(([c, t]) => `<label class="v-${c}"><input type="radio" name="v_${esc(o.id)}" value="${c}" ${initial?.[o.id] === c ? 'checked' : ''} /><span>${t}</span></label>`).join('')}</div>
+        </div>`).join('')}
+        <div class="row" style="justify-content:flex-end;margin-top:16px"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">${esc(verb)}</button></div>
+      </form>`, { onClose: () => resolve(done) });
+    const form = el.querySelector('#pv');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const vote = {};
+      for (const o of l.poll.options) {
+        const v = form.querySelector(`[name="v_${CSS.escape(o.id)}"]:checked`)?.value;
+        if (!v) { toast(`Say Yes, Maybe or No for ${pollOptText(o, false)}`, true); return; }
+        vote[o.id] = v;
+      }
+      if (Object.values(vote).every((v) => v === 'no')) { toast("Say Yes or Maybe to at least one date. If none work, you don't need to join.", true); return; }
+      done = vote;
+      close();
+    });
+  });
+}
+
 /**
  * Ask the lobby's questions before joining. Resolves the answers ({ id: value }),
  * or null if they close it. `verb` is the button text, e.g. "Request to join".
@@ -1074,6 +1127,89 @@ function showAnswers(user, questions, answers) {
     ${answersHtml(questions, answers)}`);
 }
 
+/**
+ * The date poll part of the lobby form: a list of dates (each with optional times),
+ * and how the date gets picked. get() returns the poll to save, or null after a toast.
+ */
+function pollEditor(form, initial) {
+  const box = document.getElementById('poll-box');
+  const list = document.getElementById('poll-opts');
+  const repeatBox = form.querySelector('.repeat-box');
+  let opts = (initial?.options || []).map((o) => ({ id: o.id, date: o.start ? splitLocal(o.start).date : o.date, start: splitLocal(o.start).time, end: splitLocal(o.end).time }));
+  while (opts.length < 2) opts.push({ date: '', start: '', end: '' });
+  const blankFirst = (html, text) => html.replace('<option value="">Time</option>', `<option value="">${text}</option>`);
+  const draw = () => {
+    list.innerHTML = opts.map((o, i) => `
+      <div class="poll-opt" data-i="${i}">
+        <span class="q-num">${i + 1}</span>
+        <input type="date" class="po-date" value="${esc(o.date)}" aria-label="Date ${i + 1}" />
+        ${blankFirst(timeSelect(`po-s-${i}`, '', o.start, `Start time for date ${i + 1}`), 'Start')}
+        ${blankFirst(timeSelect(`po-e-${i}`, '', o.end, `End time for date ${i + 1}`), 'End')}
+        <button type="button" class="btn ghost sm po-del" ${opts.length <= 2 ? 'disabled' : ''} aria-label="Remove date ${i + 1}">✕</button>
+      </div>`).join('');
+    document.getElementById('poll-add').hidden = opts.length >= 10;
+  };
+  const read = () => list.querySelectorAll('.poll-opt').forEach((el) => {
+    const o = opts[+el.dataset.i];
+    o.date = el.querySelector('.po-date').value;
+    [o.start, o.end] = [...el.querySelectorAll('select')].map((x) => x.value);
+  });
+  list.addEventListener('change', read);
+  list.addEventListener('click', (e) => {
+    const del = e.target.closest('.po-del');
+    if (!del) return;
+    read();
+    opts.splice(+del.closest('.poll-opt').dataset.i, 1);
+    draw();
+  });
+  document.getElementById('poll-add').addEventListener('click', () => {
+    read();
+    // Suggest the day after the last date
+    const last = [...opts].reverse().find((o) => o.date);
+    let date = '';
+    if (last) { const d = new Date(`${last.date}T12:00:00`); d.setDate(d.getDate() + 1); date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+    opts.push({ date, start: last?.start || '', end: last?.end || '' });
+    draw();
+    list.querySelector('.poll-opt:last-child .po-date')?.focus();
+  });
+  const update = () => {
+    const usePoll = form.schedule?.value === 'poll';
+    box.hidden = !usePoll;
+    repeatBox.hidden = usePoll;
+    const decide = form.pollDecide.value;
+    document.getElementById('pd-target').hidden = decide !== 'responses';
+    document.getElementById('pd-close').hidden = decide !== 'deadline';
+    if (!form.pollTarget.value) form.pollTarget.value = Math.max(1, (+form.maxSlots.value || 4) - 1);
+    const spots = Math.max(1, (+form.maxSlots.value || 4) - 1);
+    const how = decide === 'responses' ? `Once ${form.pollTarget.value || '?'} ${form.pollTarget.value === '1' ? 'person has' : 'people have'} answered, the date with the most Yes is picked automatically (ties go to more Maybes, then the earlier date). You can still pick one yourself before that.`
+      : decide === 'deadline' ? 'When the poll closes, the date with the most Yes is picked automatically (ties go to more Maybes, then the earlier date). You can still pick one yourself before that.'
+      : "You see who said Yes, Maybe or No to each date and pick one whenever you're ready.";
+    document.getElementById('poll-rule').innerHTML = `${esc(how)}<br />Then the people who said Yes to that date get the ${spots} open spot${spots === 1 ? '' : 's'} in the order they answered, and Maybes fill any left over. Everyone else who said Yes or Maybe goes on the waitlist and moves up as people drop out.`;
+  };
+  form.addEventListener('change', update);
+  form.maxSlots.addEventListener('input', update);
+  draw(); update();
+  return {
+    get: () => {
+      read();
+      const options = [];
+      for (const o of opts) {
+        if (!o.date) continue;
+        if (o.end && !o.start) { toast('Pick a start time for each date that has an end time', true); return null; }
+        const start = o.start ? joinLocal(o.date, o.start) : null;
+        let end = o.end ? joinLocal(o.date, o.end) : null;
+        if (end && end <= start) { const d = new Date(end); d.setDate(d.getDate() + 1); end = d.toISOString(); } // ends after midnight
+        options.push({ id: o.id, date: o.date, start, end });
+      }
+      if (new Set(options.map((o) => o.date)).size < 2) { toast('Add at least 2 different dates to the poll', true); return null; }
+      const decide = form.pollDecide.value;
+      const closesAt = decide === 'deadline' ? joinLocal(form.closeDate.value, form.closeTime.value) : null;
+      if (decide === 'deadline' && !closesAt) { toast('Pick the date and time the poll closes', true); return null; }
+      return { options, decide, target: form.pollTarget.value, closesAt };
+    },
+  };
+}
+
 async function viewLobbyForm(id) {
   if (!state.me) return requireLogin('Log in to create a lobby.');
   if (!state.me.onboarded) { location.hash = '#/me/edit'; return; }
@@ -1081,7 +1217,11 @@ async function viewLobbyForm(id) {
   if (l && !l.me.isManager) { toast('Only hosts can edit this lobby', true); location.hash = `#/lobbies/${id}`; return; }
   const v = l?.visibility || 'public';
   const rep0 = l?.recurrence?.repeat || 'none';
-  const start0 = splitLocal(l?.scheduledAt);
+  const start0 = l?.day && !l?.scheduledAt ? { date: l.day, time: '' } : splitLocal(l?.scheduledAt);
+  // Date poll: offered while it hasn't picked a date; once people answered it can't switch back to a set time.
+  const poll0 = l?.poll && !l.poll.decidedId ? l.poll : null;
+  const canPoll = !l || (!l.recurrence && !l.poll?.decidedId);
+  const pollLocked = !!poll0 && poll0.responses + (l.requestCount || 0) > 0;
   const end0 = splitLocal(l?.endsAt);
   // A repeating lobby can't go back to one-time (its dates have sign-ups and channels).
   const repeatChoices = Object.entries(REPEAT).filter(([k]) => !(l?.recurrence && k === 'none'));
@@ -1092,6 +1232,28 @@ async function viewLobbyForm(id) {
         <div class="field"><label for="t">Title</label><input type="text" id="t" name="title" required maxlength="80" placeholder="Mario Party Friday night chaos" value="${esc(l?.title)}" /></div>
         <div class="field"><label for="g">Game / activity <span class="hint">(optional)</span></label><input type="text" id="g" name="game" maxlength="80" placeholder="Mario Party Superstars" value="${esc(l?.game)}" /></div>
         <div class="field"><label for="pl">Where <span class="hint">(optional, a general area, not an address)</span></label><input type="text" id="pl" name="place" maxlength="60" list="place-ideas" placeholder="Online, San Diego, CA…" value="${esc(l?.place)}" /><datalist id="place-ideas"><option value="Online"></option></datalist></div>
+        ${canPoll ? `<div class="field">
+          <label>When</label>
+          <div class="seg">
+            ${pollLocked ? '' : `<label><input type="radio" name="schedule" value="fixed" ${poll0 ? '' : 'checked'} /><span>🗓 I'll set the date</span></label>`}
+            <label><input type="radio" name="schedule" value="poll" ${poll0 ? 'checked' : ''} /><span>🗳 Let people vote on a date</span></label>
+          </div>
+        </div>
+        <div class="poll-box" id="poll-box" hidden>
+          <p class="hint" style="margin:0 0 12px">Offer at least 2 different dates. Times are optional; you can add the same date twice with different times. People say <strong>Yes</strong>, <strong>Maybe</strong> or <strong>No</strong> to each one when they join${l?.approval ? ' or ask to join' : ''}.</p>
+          <div id="poll-opts" class="poll-opts"></div>
+          <button type="button" class="q-opt-add" id="poll-add"><span class="q-plus" aria-hidden="true">+</span> Add a date</button>
+          <div class="grid-2" style="margin-top:14px">
+            <div class="field"><label for="pd">How is the date picked?</label><select id="pd" name="pollDecide">
+              <option value="manual" ${poll0?.decide === 'manual' ? 'selected' : ''}>I'll pick it, after seeing who can make it</option>
+              <option value="responses" ${poll0?.decide === 'responses' ? 'selected' : ''}>Automatically, once enough people answer</option>
+              <option value="deadline" ${poll0?.decide === 'deadline' ? 'selected' : ''}>Automatically, at a set time</option>
+            </select></div>
+            <div class="field" id="pd-target"><label for="pt">Pick once this many people answered</label><input type="number" id="pt" name="pollTarget" min="1" max="100" value="${esc(poll0?.target || '')}" /></div>
+            <div class="field" id="pd-close"><label for="pc">Poll closes <span class="hint">(your local time)</span></label><div class="dt-pair"><input type="date" id="pc" name="closeDate" value="${esc(splitLocal(poll0?.closesAt).date)}" />${timeSelect('pct', 'closeTime', splitLocal(poll0?.closesAt).time, 'Closing time')}</div></div>
+          </div>
+          <p class="hint" id="poll-rule" style="margin:0"></p>
+        </div>` : ''}
         <div class="repeat-box">
           <div class="grid-2">
             <div class="field"><label for="w"><span id="w-label">Starts</span> <span class="hint" id="w-hint">(optional, your local time)</span></label><div class="dt-pair"><input type="date" id="w" name="startDate" value="${esc(start0.date)}" />${timeSelect('wt', 'startTime', start0.time, 'Start time')}</div></div>
@@ -1166,6 +1328,7 @@ async function viewLobbyForm(id) {
   form.repeatAhead.addEventListener('change', updateRepeat);
   for (const el of [form.startDate, form.startTime, form.endTime]) el.addEventListener('change', updateRepeat);
   updateRepeat();
+  const pollEd = canPoll ? pollEditor(form, poll0) : null;
   const questions = questionEditor(document.getElementById('q-list'), document.getElementById('q-add'), l?.questions || []);
   const cohostPicker = form.querySelector('#cohosts') ? userPicker(form.querySelector('#cohosts'), { initial: l?.coHosts || [], exclude: [state.me.id] }) : null;
   const invitePicker = form.querySelector('#invites') ? userPicker(form.querySelector('#invites'), { exclude: [state.me.id] }) : null;
@@ -1173,18 +1336,25 @@ async function viewLobbyForm(id) {
     e.preventDefault();
     const fd = new FormData(form);
     const { startDate, startTime, endDate, endTime } = Object.fromEntries(fd);
-    if (startDate && !startTime) return toast('Pick a start time', true);
+    const usePoll = fd.get('schedule') === 'poll';
+    let poll = null;
+    if (usePoll) { poll = pollEd.get(); if (!poll) return; }
+    const repeating = !usePoll && fd.get('repeat') !== 'none';
+    // A one-time lobby can have a date with no time yet.
+    const day = !usePoll && !repeating && startDate && !startTime && !endDate && !endTime ? startDate : null;
+    if (!usePoll && startDate && !startTime && !day) return toast('Pick a start time', true);
     if (startTime && !startDate) return toast('Pick a start date', true);
     if (endDate && !endTime) return toast('Pick an end time, or clear the end date', true);
-    const scheduledAt = joinLocal(startDate, startTime);
-    const endsAt = endTime ? joinLocal(endDate || startDate, endTime) : null;
+    const scheduledAt = usePoll ? null : joinLocal(startDate, startTime);
+    const endsAt = !usePoll && endTime ? joinLocal(endDate || startDate, endTime) : null;
     if (endsAt && !scheduledAt) return toast('Pick a start date and time first', true);
     if (endsAt && endsAt <= scheduledAt) return toast('The end has to be after the start', true);
     const payload = {
       title: fd.get('title'), game: fd.get('game'), place: fd.get('place'), description: fd.get('description'), maxSlots: fd.get('maxSlots'),
-      visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt, endsAt,
+      visibility: fd.get('visibility'), approval: fd.get('visibility') !== 'code' && fd.get('approval') === 'on', scheduledAt, endsAt, day,
+      schedule: usePoll ? 'poll' : 'fixed', poll,
       platforms: readToggles(form, 'platforms'), categories: readToggles(form, 'categories'),
-      repeat: fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null, repeatAhead: fd.get('repeatAhead'), questions: questions.get(),
+      repeat: usePoll ? 'none' : fd.get('repeat'), repeatUntil: fd.get('repeatUntil') || null, repeatAhead: fd.get('repeatAhead'), questions: questions.get(),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     if (cohostPicker) payload.coHostIds = cohostPicker.get().map((u) => u.id);
@@ -1218,6 +1388,13 @@ async function viewLobby(id) {
   const run = (fn) => act(async (e) => { const r = await fn(e); if (r?.lobby) l = r.lobby; render(); });
   // Answers to the host's questions, kept so a retry (wrong code, joining Discord first) doesn't ask again.
   let savedAnswers = null;
+  let savedVote = null;
+  /** During a date poll, joining starts with saying which dates work. undefined = no poll. */
+  const getVote = async (verb) => {
+    if (!pollOpen(l) || me.isMember) return undefined;
+    if (!savedVote) savedVote = await pollVoteModal(l, verb, me.vote);
+    return savedVote;
+  };
   const getAnswers = async (verb) => {
     if (!l.questions?.length || me.isManager || me.isMember) return {};
     if (!savedAnswers) savedAnswers = await answerQuestions(l, verb);
@@ -1262,21 +1439,25 @@ async function viewLobby(id) {
       ? `<div class="notice ok">You're hosting this lobby.</div><p class="hint" style="margin:10px 0 0">You're signed up for every date. Withdraw from any you'll miss, or skip a date for everyone.</p>`
       : `<div class="notice ok">You're in! 🎉</div><p class="hint" style="margin:10px 0 0">Sign up for the dates you can make below.</p><button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     if (me.isMember) {
-      const cal = l.scheduledAt && open ? `<div style="margin-top:12px">${calendarBtn(l, l.scheduledAt, l.endsAt, l.discord?.textUrl)}</div>` : '';
+      const cal = (l.scheduledAt || l.day) && open ? `<div style="margin-top:12px">${calendarBtn(l, l.scheduledAt || l.day, l.endsAt, l.discord?.textUrl)}</div>` : '';
       return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>${cal}` : `<div class="notice ok">You're in! 🎉</div>${cal}<button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     }
-    if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><button class="btn ghost sm" id="leave" style="margin-top:12px">Cancel request</button>`;
-    if (full && !l.recurrence) return `<div class="notice">This lobby is full.</div>`;
-    if (l.approval && !me.isManager) return `${me.invited ? '<div class="notice ok">You were invited!</div>' : ''}<p class="muted"${me.invited ? ' style="margin-top:12px"' : ''}>A host approves who gets ${l.recurrence ? 'in' : 'a slot'}.${l.recurrence ? ' Once you\'re approved, you can pick your dates.' : ''}</p><div class="row"><button class="btn primary" id="join">Request to join</button>${me.invited ? '<button class="btn ghost sm" id="decline">Decline</button>' : ''}</div>`;
+    if (me.waitlistPos) return `<div class="notice warn">You're <strong>#${me.waitlistPos}</strong> on the waitlist.</div><p class="hint" style="margin:10px 0 0">When someone drops out, the person at the top of the waitlist gets their spot automatically.</p><button class="btn ghost sm" id="leave" style="margin-top:12px">Leave waitlist</button>`;
+    const changeVote = me.vote && pollOpen(l) ? '<button class="btn sm" id="vote">Change my dates</button>' : '';
+    if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><div class="row" style="margin-top:12px">${changeVote}<button class="btn ghost sm" id="leave">Cancel request</button></div>`;
+    if (me.vote && pollOpen(l)) return `<div class="notice ok">Your dates are in ✓</div><p class="hint" style="margin:10px 0 0">Once a date is picked, people who said Yes to it get spots first, in the order they answered. You'll be added (or put on the waitlist) automatically.</p><div class="row" style="margin-top:12px">${changeVote}<button class="btn ghost sm" id="leave">Leave</button></div>`;
+    const fullNote = full && !l.recurrence && !pollOpen(l) ? '<div class="notice" style="margin-bottom:12px">This lobby is full. Join the waitlist and you\'ll get the next spot that opens.</div>' : '';
+    const joinLabel = pollOpen(l) ? 'Pick your dates' : full && !l.recurrence ? 'Join the waitlist' : 'Join lobby';
+    if (l.approval && !me.isManager) return `${fullNote}${me.invited ? '<div class="notice ok">You were invited!</div>' : ''}<p class="muted"${me.invited ? ' style="margin-top:12px"' : ''}>A host approves who gets ${l.recurrence ? 'in' : 'a slot'}.${l.recurrence ? ' Once you\'re approved, you can pick your dates.' : ''}</p><div class="row"><button class="btn primary" id="join">Request to join</button>${me.invited ? '<button class="btn ghost sm" id="decline">Decline</button>' : ''}</div>`;
     if (l.recurrence && ['public', 'friends'].includes(l.visibility) && !me.invited) return `<p class="muted" style="margin:0">Pick the dates you can make in the <strong>Dates</strong> list. Signing up for a date joins the lobby.</p>`;
-    if (me.invited) return `<div class="notice ok">You were invited!</div><div class="row" style="margin-top:12px"><button class="btn primary" id="join">Join lobby</button><button class="btn ghost sm" id="decline">Decline</button></div>`;
+    if (me.invited) return `${fullNote}<div class="notice ok">You were invited!</div><div class="row" style="margin-top:12px"><button class="btn primary" id="join">${joinLabel}</button><button class="btn ghost sm" id="decline">Decline</button></div>`;
     switch (l.visibility) {
       case 'code': {
         const pre = state.pendingCode?.id === l.id ? state.pendingCode.code : '';
-        return `<p class="muted">${pre ? 'Code found — hit Join to take a slot.' : 'Enter the 4-digit code from the host.'}</p><form class="row" id="codef"><input type="text" name="code" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required value="${esc(pre)}" style="width:110px;letter-spacing:.3em;text-align:center;font-weight:700" /><button class="btn primary">Join</button></form>`;
+        return `${fullNote}<p class="muted">${pre ? `Code found — hit ${pollOpen(l) ? 'Next to pick your dates' : 'Join to take a slot'}.` : 'Enter the 4-digit code from the host.'}</p><form class="row" id="codef"><input type="text" name="code" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="0000" required value="${esc(pre)}" style="width:110px;letter-spacing:.3em;text-align:center;font-weight:700" /><button class="btn primary">${pollOpen(l) ? 'Next' : full ? 'Join waitlist' : 'Join'}</button></form>`;
       }
       case 'private': return `<div class="notice">Invite only.</div>`;
-      default: return `<button class="btn primary lg" id="join" style="width:100%">Join lobby</button>`;
+      default: return `${fullNote}<button class="btn primary lg" id="join" style="width:100%">${joinLabel}</button>`;
     }
   }
 
@@ -1317,14 +1498,15 @@ async function viewLobby(id) {
       else if (s.signedUp) action = `<span class="going">✓ Going</span>${me.calendarSynced
         ? '<span class="synced" title="This date is in your calendar feed">📅 In calendar</span>'
         : `<button class="btn sm cal-btn" data-cal="${esc(s.key)}">📅 Calendar</button>`}<button class="btn ghost sm" data-withdraw="${esc(s.key)}">Can't make it</button>`;
-      else if (canPick) action = fullDate ? '<span class="dim">Full</span>' : `<button class="btn primary sm" data-signup="${esc(s.key)}">Sign up</button>`;
+      else if (s.waitlistPos) action = `<span class="dim">Waitlist #${s.waitlistPos}</span><button class="btn ghost sm" data-withdraw="${esc(s.key)}">Leave waitlist</button>`;
+      else if (canPick) action = fullDate ? `<button class="btn sm" data-signup="${esc(s.key)}" title="You'll get a spot if someone drops out">Join waitlist</button>` : `<button class="btn primary sm" data-signup="${esc(s.key)}">Sign up</button>`;
       const skip = me.isManager && !s.skipped && !s.past ? `<button class="btn ghost sm" data-skip="${esc(s.key)}" title="Cancel this date for everyone">Skip date</button>` : '';
       const links = s.discord ? `<div class="row" style="gap:6px"><a class="btn discord sm" href="${esc(s.discord.textUrl)}" target="_blank" rel="noopener"># Chat</a>${s.discord.voiceUrl ? `<a class="btn discord sm" href="${esc(s.discord.voiceUrl)}" target="_blank" rel="noopener">🔊 Voice</a>` : ''}</div>` : '';
       return `<div class="date-row${s.skipped || s.past ? ' muted-row' : ''}">
         <div class="date-when"><strong>${esc(new Date(s.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</strong><span class="dim">${esc(fmtTime(s.at))}${s.endAt ? ` – ${esc(fmtTime(s.endAt))}` : ''}</span></div>
         <div class="date-who">
           <div class="avatars">${s.members.slice(0, 6).map((u) => `<a href="#/u/${esc(u.id)}" title="${esc(u.displayName)}">${avatar(u, 26)}</a>`).join('')}${s.members.length > 6 ? `<span class="dim">+${s.members.length - 6}</span>` : ''}</div>
-          <span class="dim" style="font-size:.85rem">${s.count}/${l.maxSlots} going</span>
+          <span class="dim" style="font-size:.85rem">${s.count}/${l.maxSlots} going${s.waitlistCount ? ` · ${s.waitlistCount} waiting` : ''}</span>
         </div>
         <div class="date-actions">${links}${action}${skip}</div>
       </div>`;
@@ -1337,6 +1519,41 @@ async function viewLobby(id) {
     </div>`;
   }
 
+  function pollCard() {
+    const p = l.poll;
+    if (!p) return '';
+    const picked = p.decidedId ? p.options.find((o) => o.id === p.decidedId) : null;
+    const counted = p.responses;
+    const rule = picked ? `Picked ${p.auto ? 'automatically' : 'by the host'}${p.decidedAt ? ` on ${fmtDate(p.decidedAt)}` : ''}.`
+      : p.decide === 'responses' ? `The date is picked automatically once ${p.target} ${p.target === 1 ? 'person has' : 'people have'} answered (${counted} so far), unless the host picks first.`
+      : p.decide === 'deadline' ? `The date is picked automatically on ${fmtDate(p.closesAt)}, unless the host picks first.`
+      : 'The host picks the date after seeing who can make it.';
+    const most = Math.max(1, ...p.options.map((o) => o.yes + o.maybe + o.no));
+    const row = (o) => {
+      const mine = me.vote?.[o.id];
+      const pick = me.isManager && open && !picked ? `<button class="btn sm" data-pick="${esc(o.id)}">Pick this date</button>` : '';
+      return `<div class="poll-row${o.id === p.decidedId ? ' won' : ''}${o.id === p.leader ? ' leading' : ''}">
+        <div class="poll-when"><strong>${esc(pollOptText(o))}</strong>${o.id === p.decidedId ? '<span class="tag code">Picked</span>' : o.id === p.leader ? '<span class="dim">Leading</span>' : ''}${mine ? `<span class="my-vote v-${mine}">You: ${VOTE_LABEL[mine]}</span>` : ''}</div>
+        <div class="poll-bar" title="${o.yes} yes, ${o.maybe} maybe, ${o.no} no"><i class="b-yes" style="width:${(o.yes / most) * 100}%"></i><i class="b-maybe" style="width:${(o.maybe / most) * 100}%"></i></div>
+        <div class="poll-counts"><span class="c-yes">${o.yes} yes</span><span class="c-maybe">${o.maybe} maybe</span><span class="c-no">${o.no} no</span>${pick}</div>
+      </div>`;
+    };
+    const mark = { yes: '<span class="c-yes" title="Yes">✓</span>', maybe: '<span class="c-maybe" title="Maybe">?</span>', no: '<span class="c-no" title="No">✗</span>' };
+    const grid = me.isManager && p.votes?.length ? `<details class="poll-who"${picked ? '' : ' open'}><summary>Who answered (${p.votes.length})</summary>
+      <div class="poll-grid-wrap"><table class="poll-grid">
+        <thead><tr><th>In the order they answered</th>${p.options.map((o) => `<th>${esc(pollOptText(o, false))}</th>`).join('')}</tr></thead>
+        <tbody>${p.votes.map((v, i) => `<tr><td><span class="dim">${i + 1}.</span> ${esc(v.user.displayName)}${v.pending ? ' <span class="tag">awaiting approval</span>' : ''}</td>${p.options.map((o) => `<td>${mark[v.picks[o.id]] || '<span class="dim">–</span>'}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>${p.votes.some((v) => v.pending) ? '<p class="hint" style="margin:8px 0 0">Answers from people awaiting approval only count once you approve them.</p>' : ''}</details>` : '';
+    return `<div class="card poll-card">
+      <h2>${picked ? '✅ Date picked from the poll' : '🗳 Date poll'}</h2>
+      <p class="hint" style="margin-top:0">${esc(rule)}</p>
+      ${p.stalled && me.isManager ? '<div class="notice warn" style="margin-bottom:12px">The poll closed but nobody said Yes to any date yet. Pick one yourself, or wait for more answers.</div>' : ''}
+      ${picked && !me.isManager ? '' : p.options.map(row).join('')}
+      ${!picked && !counted ? '<p class="dim" style="margin:8px 0 0">No answers yet.</p>' : ''}
+      ${grid}
+    </div>`;
+  }
+
   function managerBox() {
     if (!me.isManager) return '';
     return `
@@ -1345,9 +1562,9 @@ async function viewLobby(id) {
         const resp = (l.responses || []).find((r) => r.user.id === u.id);
         return `<div class="request-item"><div class="inbox-item">${userLine(u, 30)}<div class="row"><button class="btn primary sm" data-approve="${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(u.id)}">Deny</button></div></div>${l.questions?.length ? answersHtml(l.questions, resp?.answers) : ''}</div>`;
       }).join('')}</div>` : ''}
-      ${l.questions?.length ? `<div class="card"><h2>Answers${(l.responses || []).filter((r) => r.status === 'member').length ? ` (${(l.responses || []).filter((r) => r.status === 'member').length})` : ''}</h2>
-        <p class="hint" style="margin-top:0">What members said when they joined. Only you and co-hosts can see this.</p>
-        ${(l.responses || []).filter((r) => r.status === 'member').map((r) => `<details class="resp"><summary>${userLine(r.user, 26)}<span class="dim">${esc(fmtDate(r.at))}</span></summary>${answersHtml(l.questions, r.answers)}</details>`).join('') || '<p class="dim" style="margin:0">No answers yet.</p>'}
+      ${l.questions?.length ? `<div class="card"><h2>Answers${(l.responses || []).filter((r) => r.status !== 'requested').length ? ` (${(l.responses || []).filter((r) => r.status !== 'requested').length})` : ''}</h2>
+        <p class="hint" style="margin-top:0">What people said when they joined. Only you and co-hosts can see this.</p>
+        ${(l.responses || []).filter((r) => r.status !== 'requested').map((r) => `<details class="resp"><summary>${userLine(r.user, 26)}${r.status === 'waitlist' ? '<span class="tag">Waitlist</span>' : r.status === 'voted' ? '<span class="tag">Voted</span>' : ''}<span class="dim">${esc(fmtDate(r.at))}</span></summary>${answersHtml(l.questions, r.answers)}</details>`).join('') || '<p class="dim" style="margin:0">No answers yet.</p>'}
       </div>` : ''}
       ${open && l.visibility === 'private' ? `<div class="card"><h2>Invite creators</h2><div id="inv"></div><button class="btn sm" id="send-inv" style="margin-top:10px">Send invites</button>
         ${l.invited?.length ? `<p class="hint" style="margin:14px 0 6px">Invited, not joined yet:</p>${l.invited.map((u) => `<div class="inbox-item">${userLine(u, 26)}<button class="btn ghost sm" data-uninvite="${esc(u.id)}">Revoke</button></div>`).join('')}` : ''}</div>` : ''}
@@ -1416,10 +1633,11 @@ async function viewLobby(id) {
             <h1 class="lobby-title">${esc(l.title)}</h1>
             <div class="meta-row">${l.place ? `<span>📍 ${esc(l.place)}</span>` : ''}${l.recurrence
               ? `<span>🔁 ${esc(repeatText(l.recurrence))}</span><span>🗓 ${l.next ? `Next: ${esc(fmtRange(l.next.at, l.next.endAt))}` : 'No upcoming dates'}</span><span>👥 ${l.memberCount} member${l.memberCount === 1 ? '' : 's'} · ${l.maxSlots} per date</span>`
-              : `<span>🗓 ${l.scheduledAt ? esc(fmtRange(l.scheduledAt, l.endsAt)) : 'No set time'}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>`}${l.questions?.length ? `<span>📝 ${l.questions.length} question${l.questions.length === 1 ? '' : 's'} to join</span>` : ''}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
+              : `<span>${pollOpen(l) ? `🗳 Date poll · ${l.poll.options.length} dates` : `🗓 ${whenText(l) ? esc(whenText(l)) : 'No set time'}`}</span><span>👥 ${l.memberCount}/${l.maxSlots} slots</span>${l.waitlist?.length ? `<span>⏳ ${l.waitlist.length} on the waitlist</span>` : ''}`}${l.questions?.length ? `<span>📝 ${l.questions.length} question${l.questions.length === 1 ? '' : 's'} to join</span>` : ''}${l.approval && l.requestCount ? `<span>⏳ ${l.requestCount} pending</span>` : ''}</div>
             <div class="chips">${catChips(l.categories)}</div>
             ${l.description ? `<p class="desc-text" style="margin-top:18px">${esc(l.description)}</p>` : ''}
           </div>
+          ${pollCard()}
           ${datesCard()}
           <div class="card">
             <h2>Hosted by</h2>
@@ -1432,6 +1650,7 @@ async function viewLobby(id) {
               ${l.recurrence ? '' : Array.from({ length: Math.min(slotsLeft, 8) }, () => '<div class="open-slot"><i></i>Open slot</div>').join('')}
               ${!l.recurrence && slotsLeft > 8 ? `<div class="dim">+ ${slotsLeft - 8} more open slots</div>` : ''}
             </div>
+            ${l.waitlist?.length ? `<h3 class="waitlist-head">Waitlist (${l.waitlist.length})</h3><p class="hint" style="margin:0 0 8px">First in line gets the next open spot.</p><div class="member-list">${l.waitlist.map((u, i) => `<div class="member"><span class="row" style="gap:8px"><span class="dim">${i + 1}.</span>${userLine(u, 30)}</span>${me.isManager ? `<button class="btn ghost sm" data-kick="${esc(u.id)}">Remove</button>` : ''}</div>`).join('')}</div>` : ''}
           </div>
         </div>
         <aside class="side-stack">
@@ -1443,15 +1662,39 @@ async function viewLobby(id) {
       </div>`;
 
     const on = (sel, fn) => { const el = document.querySelector(sel); if (el) el.addEventListener('click', run(fn)); };
+    const joinVerb = () => (l.approval && !me.isManager ? 'Send request' : pollOpen(l) ? 'Send my dates' : full ? 'Join the waitlist' : 'Join lobby');
     on('#join', async () => {
-      const answers = await getAnswers(l.approval && !me.isManager ? 'Send request' : 'Join lobby');
+      const vote = await getVote(l.questions?.length && !me.isManager ? 'Next' : joinVerb());
+      if (vote === null) return;
+      const answers = await getAnswers(joinVerb());
       if (!answers) return;
-      return joinWith(answers);
+      return joinWith(answers, vote);
     });
-    const joinWith = (answers) => withServerCheck(async () => {
-      const r = await api('POST', `${base}/join`, { answers });
+    on('#vote', async () => {
+      const vote = await pollVoteModal(l, 'Save my dates', me.vote);
+      if (!vote) return;
+      const r = await api('POST', `${base}/join`, { vote });
+      toast('Your dates are updated');
+      return r;
+    });
+    document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', run(async () => {
+      const o = l.poll.options.find((x) => x.id === b.dataset.pick);
+      const spots = Math.max(0, l.maxSlots - l.memberCount);
+      const ok = await askConfirm({
+        title: `Pick ${pollOptText(o, false)}?`,
+        message: `The poll closes and this becomes the lobby's date. ${o.yes} said Yes and ${o.maybe} said Maybe. The first ${spots} of them get spots (Yes first, in the order they answered), and the rest go on the waitlist. People who said No aren't added.`,
+        confirmLabel: 'Pick this date',
+      });
+      if (!ok) return;
+      const r = await api('POST', `${base}/pick/${o.id}`);
+      toast('Date picked! Everyone who got a spot is in the lobby.');
+      return r;
+    })));
+    const joinWith = (answers, vote) => withServerCheck(async () => {
+      const r = await api('POST', `${base}/join`, { answers, vote });
       l = r.lobby; render();
-      toast(r.lobby.me.isMember ? 'Joined!' : 'Request sent');
+      const m = r.lobby.me;
+      toast(m.isMember ? 'Joined!' : m.requested ? 'Request sent' : m.waitlistPos ? `You're #${m.waitlistPos} on the waitlist` : m.vote ? 'Thanks! Your dates are in.' : 'Done');
       refreshInboxCount().then(() => renderNav(currentRoute));
       return r;
     });
@@ -1484,7 +1727,8 @@ async function viewLobby(id) {
     })));
     const signupWith = (key, answers) => withServerCheck(async () => {
       const r = await api('POST', `${base}/signup/${key}`, { answers });
-      toast(r.lobby.me.calendarSynced ? "You're signed up! It'll be added to your calendar." : "You're signed up for that date!");
+      const s = r.lobby.sessions?.find((x) => x.key === key);
+      toast(s?.waitlistPos ? `That date is full. You're #${s.waitlistPos} on its waitlist.` : r.lobby.me.calendarSynced ? "You're signed up! It'll be added to your calendar." : "You're signed up for that date!");
       l = r.lobby; render();
       return r;
     });
@@ -1506,9 +1750,17 @@ async function viewLobby(id) {
       e.preventDefault();
       const code = new FormData(codef).get('code');
       try {
-        const answers = await getAnswers('Join lobby');
+        const vote = await getVote(l.questions?.length ? 'Next' : 'Send my dates');
+        if (vote === null) return;
+        const answers = await getAnswers(pollOpen(l) ? 'Send my dates' : 'Join lobby');
         if (!answers) return;
-        await withServerCheck(async () => { const r = await api('POST', `${base}/join`, { code, answers }); l = r.lobby; toast('Joined!'); render(); return r; });
+        await withServerCheck(async () => {
+          const r = await api('POST', `${base}/join`, { code, answers, vote });
+          l = r.lobby; render();
+          const m = r.lobby.me;
+          toast(m.isMember ? 'Joined!' : m.waitlistPos ? `You're #${m.waitlistPos} on the waitlist` : 'Thanks! Your dates are in.');
+          return r;
+        });
       } catch (err) { toast(err.message, true); }
     });
     const inv = document.getElementById('inv');
@@ -1531,7 +1783,7 @@ async function viewInbox() {
   $app.innerHTML = `
     <div class="page-head"><div><h1>Inbox</h1><p>Requests and invites waiting on you.</p></div></div>
     ${section('Join requests for your lobbies', d.approvals.flatMap((a) => a.requests.map((u) => `<div class="request-item"><div class="inbox-item"><div>${userLine(u, 32)}<div class="hint" style="margin-top:4px">wants to join <a href="#/lobbies/${esc(a.lobby.id)}">${esc(a.lobby.title)}</a></div></div><div class="row"><button class="btn primary sm" data-approve="${esc(a.lobby.id)}|${esc(u.id)}">Approve</button><button class="btn ghost sm" data-deny="${esc(a.lobby.id)}|${esc(u.id)}">Deny</button></div></div>${a.questions?.length ? answersHtml(a.questions, u.answers) : ''}</div>`)), 'No pending requests.')}
-    ${section('Lobby invites', d.invites.map((l) => `<div class="inbox-item"><div><a href="#/lobbies/${esc(l.id)}"><strong>${esc(l.title)}</strong></a><div class="hint">from ${esc(l.host?.displayName)} · ${l.memberCount}/${l.maxSlots} · ${l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : 'anytime'}</div></div><a class="btn primary sm" href="#/lobbies/${esc(l.id)}">View &amp; join</a></div>`), 'No invites right now.')}
+    ${section('Lobby invites', d.invites.map((l) => `<div class="inbox-item"><div><a href="#/lobbies/${esc(l.id)}"><strong>${esc(l.title)}</strong></a><div class="hint">from ${esc(l.host?.displayName)} · ${l.memberCount}/${l.maxSlots} · ${pollOpen(l) ? 'date poll' : l.scheduledAt ? esc(fmtDate(l.scheduledAt)) : l.day ? esc(fmtDayKey(l.day, false)) : 'anytime'}</div></div><a class="btn primary sm" href="#/lobbies/${esc(l.id)}">View &amp; join</a></div>`), 'No invites right now.')}
     ${section('Friend requests', d.friendRequests.map((u) => `<div class="inbox-item">${userLine(u, 32)}<div class="row"><button class="btn primary sm" data-faccept="${esc(u.id)}">Accept</button><button class="btn ghost sm" data-fdecline="${esc(u.id)}">Decline</button></div></div>`), 'No friend requests.')}
     ${section('Review requests', d.reviewRequests.map((r) => `<div class="inbox-item"><div>${userLine(r.from, 32)}<div class="hint" style="margin-top:4px">wants a review of what they're like to collab with${r.note ? ` · “${esc(r.note)}”` : ''}</div></div><div class="row"><button class="btn primary sm" data-write="${esc(r.id)}">Write review</button><button class="btn ghost sm" data-rdecline="${esc(r.id)}">No thanks</button></div></div>`), 'No review requests.')}
     ${d.newReviews.length ? section('New reviews of you', d.newReviews.map((r) => `<div class="inbox-item"><div>${userLine(r.author, 32)}<div style="margin-top:6px"><span class="stars">${'★'.repeat(r.rating)}<span class="off">${'★'.repeat(5 - r.rating)}</span></span></div><p class="muted" style="margin:6px 0 0">${esc(r.text)}</p></div><div class="row"><button class="btn primary sm" data-rshow="${esc(r.id)}">Show on my profile</button><button class="btn ghost sm" data-rhide="${esc(r.id)}">Keep hidden</button></div></div>`), '') : ''}

@@ -24,6 +24,9 @@ export function normalizeLobby(l) {
   l.approval = l.visibility !== 'code' && l.approval === true;
   l.questions ||= [];
   l.answers ||= {};
+  l.waitlist ||= [];
+  for (const x of l.sessions || []) x.waitlist ||= [];
+  if (l.poll) l.poll.votes ||= {};
   return l;
 }
 
@@ -155,11 +158,13 @@ export function miniUser(u) {
 
 export const isManager = (lobby, uid) => !!uid && (lobby.hostId === uid || lobby.coHostIds.includes(uid));
 export const isMember = (lobby, uid) => !!uid && lobby.memberIds.includes(uid);
+export const isWaitlisted = (lobby, uid) => !!uid && (lobby.waitlist || []).includes(uid);
+export const hasVoted = (lobby, uid) => !!uid && !!lobby.poll?.votes?.[uid];
 
 /** host = the lobby host's user record (needed for the "friends" visibility). */
 export function canView(lobby, uid, host) {
   if (lobby.status === 'cancelled') return isManager(lobby, uid);
-  if (isManager(lobby, uid) || isMember(lobby, uid) || (uid && lobby.requestIds.includes(uid))) return true;
+  if (isManager(lobby, uid) || isMember(lobby, uid) || isWaitlisted(lobby, uid) || hasVoted(lobby, uid) || (uid && lobby.requestIds.includes(uid))) return true;
   switch (lobby.visibility) {
     case 'public':
     case 'code':
@@ -357,4 +362,170 @@ export function checkAnswers(questions, raw) {
     out[q.id] = v;
   }
   return out;
+}
+
+// ---------- Waitlist ----------
+// Every lobby has one. When a lobby (or a date of a repeating lobby) is full, people
+// who'd otherwise get in join the waitlist, and the earliest one gets the next free spot.
+
+/** Move people off the waitlist into free spots. Returns who got in. */
+export function fillFromWaitlist(l, nowMs = Date.now()) {
+  const promoted = [];
+  if (l.status !== 'open') return promoted;
+  if (l.recurrence) {
+    for (const s of l.sessions || []) {
+      s.waitlist ||= [];
+      if (isPast(s, nowMs) || s.status === 'skipped') continue;
+      while (s.memberIds.length < l.maxSlots && s.waitlist.length) {
+        const uid = s.waitlist.shift();
+        if (!s.memberIds.includes(uid)) { s.memberIds.push(uid); promoted.push(uid); }
+      }
+    }
+    return promoted;
+  }
+  l.waitlist ||= [];
+  while (l.memberIds.length < l.maxSlots && l.waitlist.length) {
+    const uid = l.waitlist.shift();
+    if (l.memberIds.includes(uid)) continue;
+    l.memberIds.push(uid);
+    l.requestIds = l.requestIds.filter((x) => x !== uid);
+    l.invitedIds = l.invitedIds.filter((x) => x !== uid);
+    promoted.push(uid);
+  }
+  return promoted;
+}
+
+// ---------- Date poll ----------
+// Instead of a start time, a host can offer a few dates (each with an optional time)
+// and let people say Yes / Maybe / No to each when they join or ask to join.
+// The date is picked by the host, or automatically once enough people answered or
+// on a set date: the one with the most Yes (then most Maybe, then the earliest).
+// Yes-voters fill the spots in the order they answered, then Maybes fill any spots
+// left; everyone else who said Yes or Maybe goes on the waitlist in that order.
+
+export const POLL_DECIDE = ['manual', 'responses', 'deadline'];
+export const POLL_CHOICES = ['yes', 'maybe', 'no'];
+export const MAX_POLL_OPTIONS = 10;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Clean the host's poll. Keeps option ids (and the votes for them) when the host edits it. */
+export function cleanPoll(raw, existing, maxSlots, nowMs = Date.now()) {
+  if (!raw || typeof raw !== 'object') fail(400, 'Add the dates for the poll');
+  const known = new Set((existing?.options || []).map((o) => o.id));
+  const seen = new Set();
+  const options = [];
+  for (const o of (Array.isArray(raw.options) ? raw.options : []).slice(0, MAX_POLL_OPTIONS * 2)) {
+    const date = String(o?.date || '');
+    if (!DATE_RE.test(date)) continue;
+    const start = o.start ? snapTo5Min(o.start) : null;
+    const end = start && o.end ? snapTo5Min(o.end) : null;
+    if (end && end <= start) fail(400, 'Each poll option has to end after it starts');
+    if (end && Date.parse(end) - Date.parse(start) > 30 * 864e5) fail(400, 'A lobby can last at most 30 days');
+    const k = `${date}|${start || ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    options.push({ id: typeof o.id === 'string' && known.has(o.id) ? o.id : newId().slice(0, 8), date, start, end });
+  }
+  if (options.length > MAX_POLL_OPTIONS) fail(400, `A poll can have at most ${MAX_POLL_OPTIONS} options`);
+  if (new Set(options.map((o) => o.date)).size < 2) fail(400, 'A date poll needs at least 2 different dates');
+  options.sort((a, b) => (a.date + (a.start || '')).localeCompare(b.date + (b.start || '')));
+  const decide = POLL_DECIDE.includes(raw.decide) ? raw.decide : 'manual';
+  const target = Math.max(1, Math.min(100, parseInt(raw.target, 10) || Math.max(1, (maxSlots || 2) - 1)));
+  let closesAt = null;
+  if (decide === 'deadline') {
+    closesAt = raw.closesAt ? snapTo5Min(raw.closesAt) : null;
+    if (!closesAt) fail(400, 'Pick when the poll closes');
+    if (closesAt !== existing?.closesAt && Date.parse(closesAt) <= nowMs) fail(400, 'The poll has to close in the future');
+  }
+  // Votes for options that were removed are dropped; everyone keeps their place in line.
+  const ids = new Set(options.map((o) => o.id));
+  const votes = {};
+  for (const [uid, v] of Object.entries(existing?.votes || {})) {
+    votes[uid] = { at: v.at, picks: Object.fromEntries(Object.entries(v.picks).filter(([id]) => ids.has(id))) };
+  }
+  return { options, decide, target, closesAt, votes, decidedId: null };
+}
+
+/** Someone's Yes / Maybe / No for every option. */
+export function checkVote(poll, raw) {
+  const given = raw && typeof raw === 'object' ? raw : {};
+  const picks = {};
+  for (const o of poll.options) {
+    const v = given[o.id];
+    if (!POLL_CHOICES.includes(v)) fail(400, 'Say Yes, Maybe or No for every date', 'VOTE_NEEDED');
+    picks[o.id] = v;
+  }
+  if (!Object.values(picks).some((v) => v !== 'no')) fail(400, "Say Yes or Maybe to at least one date. If none work, you don't need to join.");
+  return picks;
+}
+
+/** Votes that count: everyone who answered, minus people still waiting for approval. Earliest first. */
+export const countedVotes = (l) => Object.entries(l.poll?.votes || {})
+  .filter(([uid]) => !l.requestIds.includes(uid))
+  .map(([uid, v]) => ({ uid, ...v }))
+  .sort((a, b) => a.at.localeCompare(b.at));
+
+export function pollTally(l) {
+  const votes = countedVotes(l);
+  return l.poll.options.map((o) => {
+    const t = { ...o, yes: 0, maybe: 0, no: 0 };
+    for (const v of votes) if (v.picks[o.id]) t[v.picks[o.id]]++;
+    return t;
+  });
+}
+
+/** The option with the most Yes (then Maybe, then earliest). Null if nobody said Yes to anything. */
+export function pollWinner(l) {
+  const ranked = pollTally(l).sort((a, b) => b.yes - a.yes || b.maybe - a.maybe);
+  return ranked[0]?.yes ? ranked[0] : null;
+}
+
+/** Whether the poll should pick its date now. */
+export function pollDue(l, nowMs = Date.now()) {
+  const p = l.poll;
+  if (!p || p.decidedId || l.status !== 'open') return false;
+  if (p.decide === 'responses') return countedVotes(l).length >= p.target;
+  if (p.decide === 'deadline') return !!p.closesAt && Date.parse(p.closesAt) <= nowMs;
+  return false;
+}
+
+/**
+ * Set the lobby's date to one poll option and seat people: Yes-voters in the order
+ * they answered, then Maybes, until the spots run out; the rest go on the waitlist.
+ * by = the host's id, or 'auto'.
+ */
+export function decidePoll(l, optionId, by) {
+  const p = l.poll;
+  const o = p.options.find((x) => x.id === optionId);
+  if (!o) fail(404, 'That date is not in the poll');
+  p.decidedId = o.id;
+  p.decidedAt = now();
+  p.decidedBy = by;
+  l.scheduledAt = o.start || null;
+  l.endsAt = o.end || null;
+  l.day = o.start ? null : o.date;
+  const votes = countedVotes(l);
+  const seat = (uid) => {
+    if (l.memberIds.includes(uid) || l.waitlist.includes(uid)) return;
+    if (l.memberIds.length < l.maxSlots) l.memberIds.push(uid);
+    else l.waitlist.push(uid);
+  };
+  const result = { added: [], waitlisted: [], dropped: [] };
+  for (const v of votes) if (v.picks[o.id] === 'yes') seat(v.uid);
+  for (const v of votes) if (v.picks[o.id] === 'maybe') seat(v.uid); // Maybes only get spots no Yes needed
+  for (const v of votes) {
+    if (l.memberIds.includes(v.uid)) result.added.push(v.uid);
+    else if (l.waitlist.includes(v.uid)) result.waitlisted.push(v.uid);
+    else result.dropped.push(v.uid);
+  }
+  for (const uid of result.dropped) delete l.answers?.[uid];
+  return result;
+}
+
+/** A poll option as text, e.g. "Fri, Dec 4, 7:00 PM" (times in the given zone). */
+export function pollOptionText(o, timeZone = 'UTC') {
+  const [y, m, d] = o.date.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
+  if (!o.start) return day;
+  return `${day}, ${new Date(o.start).toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}`;
 }

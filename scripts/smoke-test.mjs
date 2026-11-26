@@ -115,11 +115,18 @@ await test('public lobby: join creates Discord text+voice at 2 members', async (
   // leaving revokes access
   await alice.call('POST', `/lobbies/${lobby.id}/leave`);
   assert.ok(!text.overwrites.has(alice.id));
-  // full lobby
+  // full lobby: the next person goes on the waitlist, and moves in when someone leaves
   await alice.call('POST', `/lobbies/${lobby.id}/join`);
   await bob.call('POST', `/lobbies/${lobby.id}/join`);
   const full = await carol.call('POST', `/lobbies/${lobby.id}/join`);
-  assert.equal(full.status, 400);
+  assert.equal(full.status, 200);
+  assert.equal(full.lobby.me.isMember, false);
+  assert.equal(full.lobby.me.waitlistPos, 1);
+  assert.ok(!text.overwrites.has(carol.id), 'waitlisted people get no channel access');
+  await bob.call('POST', `/lobbies/${lobby.id}/leave`);
+  const after = await carol.call('GET', `/lobbies/${lobby.id}`);
+  assert.equal(after.lobby.me.isMember, true, 'first in line got the spot');
+  assert.ok(text.overwrites.has(carol.id));
 });
 
 await test('approval lobby: request queue, host approves', async () => {
@@ -600,12 +607,15 @@ await test('repeating lobby: per-date sign-ups, dated Discord channels, each dat
 
   // per-date slots
   await bob.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
-  assert.equal((await carol.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`)).status, 400, 'date 1 is full');
+  const wl = await carol.call('POST', `/lobbies/${lobby.id}/signup/${d1.key}`);
+  assert.equal(wl.lobby.sessions.find((s) => s.key === d1.key).waitlistPos, 1, 'date 1 is full: waitlist');
+  assert.equal(wl.lobby.sessions.find((s) => s.key === d1.key).signedUp, false);
   assert.equal((await carol.call('POST', `/lobbies/${lobby.id}/signup/${d2.key}`)).status, 200, 'date 2 still has room');
 
   // withdraw removes access; skip deletes that date's channels
   await bob.call('POST', `/lobbies/${lobby.id}/withdraw/${d1.key}`);
   assert.ok(!text.overwrites.has(bob.id));
+  assert.ok(text.overwrites.has(carol.id), 'carol moved up from the date\'s waitlist');
   assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/skip/${d1.key}`)).status, 403, 'only hosts skip dates');
   const sk = await host.call('POST', `/lobbies/${lobby.id}/skip/${d1.key}`);
   assert.equal(sk.lobby.sessions.find((s) => s.key === d1.key).skipped, true);
@@ -794,6 +804,124 @@ await test('flags that could not reach Discord are retried by the hourly cleanup
   await runCleanup();
   assert.equal((await db.lobbies.get(l2.id)).flags[0].reported, true);
   assert.ok(messages.some((m) => /No-show again/.test(m.content)));
+});
+
+await test('waitlist: approval and code lobbies, raising slots, hosts remove people', async () => {
+  const frank = await makeUser('frank');
+  const { lobby } = await host.call('POST', '/lobbies', { title: 'Tiny Approval', visibility: 'public', approval: true, maxSlots: 2 });
+  await alice.call('POST', `/lobbies/${lobby.id}/join`);
+  await bob.call('POST', `/lobbies/${lobby.id}/join`);
+  await host.call('POST', `/lobbies/${lobby.id}/approve/${alice.id}`);
+  const r = await host.call('POST', `/lobbies/${lobby.id}/approve/${bob.id}`);
+  assert.equal(r.status, 200, 'approving into a full lobby puts them on the waitlist');
+  assert.deepEqual(r.lobby.waitlist.map((u) => u.id), [bob.id]);
+  // more slots -> the waitlist moves up
+  const up = await host.call('PUT', `/lobbies/${lobby.id}`, { title: 'Tiny Approval', maxSlots: 3 });
+  assert.ok(up.lobby.members.some((u) => u.id === bob.id));
+  assert.equal(up.lobby.waitlist.length, 0);
+
+  const { lobby: c } = await host.call('POST', '/lobbies', { title: 'Tiny Code', visibility: 'code', maxSlots: 2 });
+  const code = (await host.call('GET', `/lobbies/${c.id}`)).lobby.code;
+  await alice.call('POST', `/lobbies/${c.id}/join`, { code });
+  assert.equal((await bob.call('POST', `/lobbies/${c.id}/join`, { code: '0000' === code ? '1111' : '0000' })).status, 403, 'wrong code still refused');
+  assert.equal((await bob.call('POST', `/lobbies/${c.id}/join`, { code })).lobby.me.waitlistPos, 1);
+  assert.equal((await frank.call('POST', `/lobbies/${c.id}/join`, { code })).lobby.me.waitlistPos, 2);
+  assert.equal((await bob.call('POST', `/lobbies/${c.id}/join`, { code })).status, 400, 'already waiting');
+  // host removes bob from the waitlist; frank is next, then gets alice's spot
+  await host.call('POST', `/lobbies/${c.id}/kick/${bob.id}`);
+  assert.equal((await frank.call('GET', `/lobbies/${c.id}`)).lobby.me.waitlistPos, 1);
+  await alice.call('POST', `/lobbies/${c.id}/leave`);
+  assert.equal((await frank.call('GET', `/lobbies/${c.id}`)).lobby.me.isMember, true);
+});
+
+const pollDates = (extra = {}) => ({
+  title: 'Poll Night', visibility: 'public', maxSlots: 3, schedule: 'poll',
+  poll: {
+    options: [
+      { date: '2030-12-04', start: '2030-12-05T03:00:00.000Z', end: '2030-12-05T05:00:00.000Z' },
+      { date: '2030-12-05' },
+      { date: '2030-12-06' },
+    ],
+    decide: 'manual', ...extra,
+  },
+});
+
+await test('date poll: needs 2+ different dates, no repeating', async () => {
+  const one = await host.call('POST', '/lobbies', { title: 'x', schedule: 'poll', poll: { options: [{ date: '2030-12-04' }, { date: '2030-12-04', start: '2030-12-04T20:00:00.000Z' }] } });
+  assert.equal(one.status, 400, 'same date twice is not enough');
+  const rep = await host.call('POST', '/lobbies', { ...pollDates(), repeat: 'weekly', scheduledAt: '2030-12-04T20:00:00.000Z' });
+  assert.equal(rep.status, 400);
+  const past = await host.call('POST', '/lobbies', pollDates({ decide: 'deadline', closesAt: '2020-01-01T00:00:00.000Z' }));
+  assert.equal(past.status, 400, 'closing time in the past');
+  const ok = await host.call('POST', '/lobbies', pollDates());
+  assert.equal(ok.status, 200);
+  assert.equal(ok.lobby.scheduledAt, null);
+  assert.equal(ok.lobby.poll.options.length, 3);
+  assert.equal(ok.lobby.poll.decidedId, null);
+});
+
+await test('date poll: host picks; Yes in answer order get spots, then Maybe, rest waitlisted', async () => {
+  const gina = await makeUser('gina');
+  const { lobby } = await host.call('POST', '/lobbies', pollDates());
+  const [o1, o2, o3] = lobby.poll.options.map((o) => o.id);
+  const vote = (y1, y2, y3) => ({ vote: { [o1]: y1, [o2]: y2, [o3]: y3 } });
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/join`, {})).status, 400, 'must answer the poll');
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/join`, vote('no', 'no', 'no'))).status, 400, 'at least one yes/maybe');
+  const a = await alice.call('POST', `/lobbies/${lobby.id}/join`, vote('maybe', 'yes', 'no'));
+  assert.equal(a.lobby.me.isMember, false, 'answering the poll does not take a spot yet');
+  assert.equal(a.lobby.me.vote[o2], 'yes');
+  assert.equal(a.lobby.poll.votes, undefined, 'only hosts see who said what');
+  await bob.call('POST', `/lobbies/${lobby.id}/join`, vote('yes', 'yes', 'no'));
+  await carol.call('POST', `/lobbies/${lobby.id}/join`, vote('yes', 'maybe', 'yes'));
+  await gina.call('POST', `/lobbies/${lobby.id}/join`, vote('no', 'yes', 'yes'));
+  // alice changes her mind; she keeps her place in line
+  await alice.call('POST', `/lobbies/${lobby.id}/join`, vote('yes', 'yes', 'no'));
+  const h = await host.call('GET', `/lobbies/${lobby.id}`);
+  assert.equal(h.lobby.poll.votes[0].user.id, alice.id);
+  const t2 = h.lobby.poll.options.find((o) => o.id === o2);
+  assert.deepEqual([t2.yes, t2.maybe, t2.no], [3, 1, 0]);
+  assert.equal(h.lobby.poll.leader, o2);
+  assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/pick/${o2}`)).status, 403, 'only hosts pick');
+  const p = await host.call('POST', `/lobbies/${lobby.id}/pick/${o2}`);
+  // 3 slots incl. host -> alice and bob (first Yes) get in, gina (Yes) then carol (Maybe) wait
+  assert.deepEqual(p.lobby.members.map((u) => u.id).sort(), [host.id, alice.id, bob.id].sort());
+  assert.deepEqual(p.lobby.waitlist.map((u) => u.id), [gina.id, carol.id]);
+  assert.equal(p.lobby.day, '2030-12-05', 'a date with no time');
+  assert.equal(p.lobby.scheduledAt, null);
+  assert.equal(p.lobby.poll.decidedId, o2);
+  assert.equal(channels.size > 0 && [...channels.values()].some((c) => c.name === 'Poll Night'), true, 'channels opened for the people who got in');
+  assert.equal((await host.call('POST', `/lobbies/${lobby.id}/pick/${o1}`)).status, 400, 'already picked');
+  await bob.call('POST', `/lobbies/${lobby.id}/leave`);
+  assert.equal((await gina.call('GET', `/lobbies/${lobby.id}`)).lobby.me.isMember, true, 'waitlist moves up after the pick');
+});
+
+await test('date poll: picks itself after N answers or at the closing time; approval votes count once approved', async () => {
+  const { lobby } = await host.call('POST', '/lobbies', { ...pollDates({ decide: 'responses', target: 2 }), approval: true });
+  const [o1, o2, o3] = lobby.poll.options.map((o) => o.id);
+  await alice.call('POST', `/lobbies/${lobby.id}/join`, { vote: { [o1]: 'yes', [o2]: 'no', [o3]: 'maybe' } });
+  await bob.call('POST', `/lobbies/${lobby.id}/join`, { vote: { [o1]: 'yes', [o2]: 'yes', [o3]: 'no' } });
+  let h = await host.call('GET', `/lobbies/${lobby.id}`);
+  assert.equal(h.lobby.poll.responses, 0, 'requests do not count yet');
+  assert.equal(h.lobby.poll.decidedId, null);
+  await host.call('POST', `/lobbies/${lobby.id}/approve/${alice.id}`);
+  h = await host.call('POST', `/lobbies/${lobby.id}/approve/${bob.id}`);
+  assert.equal(h.lobby.poll.decidedId, o1, '2 answers -> most Yes wins');
+  assert.equal(h.lobby.poll.auto, true);
+  assert.equal(h.lobby.scheduledAt, '2030-12-05T03:00:00.000Z');
+  assert.equal(h.lobby.endsAt, '2030-12-05T05:00:00.000Z');
+  assert.ok(h.lobby.members.some((u) => u.id === alice.id) && h.lobby.members.some((u) => u.id === bob.id));
+
+  const { lobby: d } = await host.call('POST', '/lobbies', pollDates({ decide: 'deadline', closesAt: new Date(Date.now() + 3600e3).toISOString() }));
+  const ids = d.poll.options.map((o) => o.id);
+  await carol.call('POST', `/lobbies/${d.id}/join`, { vote: { [ids[0]]: 'no', [ids[1]]: 'maybe', [ids[2]]: 'yes' } });
+  const stored = await db.lobbies.get(d.id);
+  stored.poll.closesAt = new Date(Date.now() - 1000).toISOString();
+  await db.lobbies.put(stored);
+  await runCleanup();
+  const after = await db.lobbies.get(d.id);
+  assert.equal(after.poll.decidedId, ids[2], 'cleanup picked the date when the poll closed');
+  assert.ok(after.memberIds.includes(carol.id));
+  assert.equal(after.day, '2030-12-06');
 });
 
 console.log(`\n${passed} tests passed (${calls.length} fake Discord calls)`);
