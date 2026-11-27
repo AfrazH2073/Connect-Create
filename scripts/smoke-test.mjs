@@ -860,7 +860,7 @@ await test('date poll: needs 2+ different dates, no repeating', async () => {
   assert.equal(ok.lobby.poll.decidedId, null);
 });
 
-await test('date poll: host picks; Yes in answer order get spots, then Maybe, rest waitlisted', async () => {
+await test('date poll: host picks; Yes in answer order get spots, rest of Yes waitlisted, Maybes stay out until they join', async () => {
   const gina = await makeUser('gina');
   const { lobby } = await host.call('POST', '/lobbies', pollDates());
   const [o1, o2, o3] = lobby.poll.options.map((o) => o.id);
@@ -883,16 +883,29 @@ await test('date poll: host picks; Yes in answer order get spots, then Maybe, re
   assert.equal(h.lobby.poll.leader, o2);
   assert.equal((await alice.call('POST', `/lobbies/${lobby.id}/pick/${o2}`)).status, 403, 'only hosts pick');
   const p = await host.call('POST', `/lobbies/${lobby.id}/pick/${o2}`);
-  // 3 slots incl. host -> alice and bob (first Yes) get in, gina (Yes) then carol (Maybe) wait
+  // 3 slots incl. host -> alice and bob (first Yes) get in, gina (Yes) waits; carol (Maybe) is in neither
   assert.deepEqual(p.lobby.members.map((u) => u.id).sort(), [host.id, alice.id, bob.id].sort());
-  assert.deepEqual(p.lobby.waitlist.map((u) => u.id), [gina.id, carol.id]);
+  assert.deepEqual(p.lobby.waitlist.map((u) => u.id), [gina.id]);
+  assert.deepEqual(p.lobby.maybes.map((u) => u.id), [carol.id]);
+  assert.equal((await carol.call('GET', `/lobbies/${lobby.id}`)).lobby.me.maybe, true);
   assert.equal(p.lobby.day, '2030-12-05', 'a date with no time');
   assert.equal(p.lobby.scheduledAt, null);
   assert.equal(p.lobby.poll.decidedId, o2);
   assert.equal(channels.size > 0 && [...channels.values()].some((c) => c.name === 'Poll Night'), true, 'channels opened for the people who got in');
   assert.equal((await host.call('POST', `/lobbies/${lobby.id}/pick/${o1}`)).status, 400, 'already picked');
+  // carol decides she's coming: lobby is full, so she lines up behind gina (no poll or questions again)
+  const c = await carol.call('POST', `/lobbies/${lobby.id}/join`, {});
+  assert.equal(c.lobby.me.waitlistPos, 2);
+  assert.equal(c.lobby.maybes.length, 0);
   await bob.call('POST', `/lobbies/${lobby.id}/leave`);
   assert.equal((await gina.call('GET', `/lobbies/${lobby.id}`)).lobby.me.isMember, true, 'waitlist moves up after the pick');
+  // a Maybe who joins while a spot is open gets it straight away
+  const { lobby: m } = await host.call('POST', '/lobbies', pollDates());
+  const mo = m.poll.options.map((o) => o.id);
+  await alice.call('POST', `/lobbies/${m.id}/join`, { vote: { [mo[0]]: 'maybe', [mo[1]]: 'no', [mo[2]]: 'no' } });
+  const mp = await host.call('POST', `/lobbies/${m.id}/pick/${mo[0]}`);
+  assert.equal(mp.lobby.members.length, 1, 'only the host: Maybes are not seated');
+  assert.equal((await alice.call('POST', `/lobbies/${m.id}/join`, {})).lobby.me.isMember, true);
 });
 
 await test('date poll: picks itself after N answers or at the closing time; approval votes count once approved', async () => {

@@ -470,7 +470,7 @@ function aboutSections({ lobbiesPreview = '' } = {}) {
         ${faq('What can other people see about me?', 'Your profile: name, picture, bio, pronouns, the links you added, your Discord username, collab videos, the reviews you chose to show, and your collab history if you turned it on.')}
         ${faq('Who can see a lobby\'s Discord channels?', 'Only people in that lobby (or, for repeating lobbies, signed up for that date), plus the server\'s admins.')}
         ${faq('What happens to the channels afterwards?', 'They\'re deleted two weeks after the host marks the lobby completed, or right away if the lobby is cancelled. For repeating lobbies, each date\'s channels go two weeks after that date.')}
-        ${faq("What if I don't know the date yet?", "Use a date poll. Offer a few dates (times are optional), and people say Yes, Maybe or No to each when they join. Pick the date yourself, or let it pick the most popular one once enough people answer or at a set time. Whoever said Yes first gets the spots.")}
+        ${faq("What if I don't know the date yet?", "Use a date poll. Offer a few dates (times are optional), and people say Yes, Maybe or No to each when they join. Pick the date yourself, or let it pick the most popular one once enough people answer or at a set time. Whoever said Yes first gets the spots; Maybes can join or line up later if they decide to come.")}
         ${faq('What happens when a lobby is full?', "You join the waitlist. When someone leaves, or the host adds spots, the first person in line gets in automatically and is added to the Discord channels.")}
         ${faq('Can I ask people questions before they join?', 'Yes. Add up to 10 questions to any lobby, like short answers, multiple choice or checkboxes. Everyone answers before joining, and only you and your co-hosts see the answers. With Needs approval on, the answers sit right next to each request so you can decide.')}
         ${faq('Can I host with someone else?', 'Yes. Add up to five co-hosts. They can edit the lobby, approve requests, invite people, and see the join code.')}
@@ -1045,7 +1045,7 @@ function pollVoteModal(l, verb, initial) {
     const spots = Math.max(1, l.maxSlots - 1);
     const { el, close } = openModal(`
       <div class="modal-head"><h2>When can you make it?</h2><button class="btn ghost sm" data-close aria-label="Close">✕</button></div>
-      <p class="hint" style="margin:0 0 16px">Say Yes, Maybe or No for each date. When the date is picked, people who said Yes get the ${spots} spot${spots === 1 ? '' : 's'} in the order they answered, then Maybes; everyone else who said Yes or Maybe goes on the waitlist.</p>
+      <p class="hint" style="margin:0 0 16px">Say Yes, Maybe or No for each date. When the date is picked, people who said Yes get the ${spots} spot${spots === 1 ? '' : 's'} in the order they answered, and the rest of them go on the waitlist. If you say Maybe, you won't be added; you can join (or join the waitlist) yourself once you know.</p>
       <form id="pv">
         ${l.poll.options.map((o) => `<div class="vote-row">
           <div class="vote-when">${esc(pollOptText(o))}</div>
@@ -1184,7 +1184,7 @@ function pollEditor(form, initial) {
     const how = decide === 'responses' ? `Once ${form.pollTarget.value || '?'} ${form.pollTarget.value === '1' ? 'person has' : 'people have'} answered, the date with the most Yes is picked automatically (ties go to more Maybes, then the earlier date). You can still pick one yourself before that.`
       : decide === 'deadline' ? 'When the poll closes, the date with the most Yes is picked automatically (ties go to more Maybes, then the earlier date). You can still pick one yourself before that.'
       : "You see who said Yes, Maybe or No to each date and pick one whenever you're ready.";
-    document.getElementById('poll-rule').innerHTML = `${esc(how)}<br />Then the people who said Yes to that date get the ${spots} open spot${spots === 1 ? '' : 's'} in the order they answered, and Maybes fill any left over. Everyone else who said Yes or Maybe goes on the waitlist and moves up as people drop out.`;
+    document.getElementById('poll-rule').innerHTML = `${esc(how)}<br />Then the people who said Yes to that date get the ${spots} open spot${spots === 1 ? '' : 's'} in the order they answered, and the rest of them go on the waitlist, moving up as people drop out. People who said Maybe aren't added or put in line; they can join (or join the waitlist) themselves if they decide to come.`;
   };
   form.addEventListener('change', update);
   form.maxSlots.addEventListener('input', update);
@@ -1396,7 +1396,7 @@ async function viewLobby(id) {
     return savedVote;
   };
   const getAnswers = async (verb) => {
-    if (!l.questions?.length || me.isManager || me.isMember) return {};
+    if (!l.questions?.length || me.isManager || me.isMember || (me.vote && !pollOpen(l))) return {};
     if (!savedAnswers) savedAnswers = await answerQuestions(l, verb);
     return savedAnswers;
   };
@@ -1443,6 +1443,13 @@ async function viewLobby(id) {
       return me.isHost ? `<div class="notice ok">You're hosting this lobby.</div>${cal}` : `<div class="notice ok">You're in! 🎉</div>${cal}<button class="btn danger sm" id="leave" style="margin-top:12px">Leave lobby</button>`;
     }
     if (me.waitlistPos) return `<div class="notice warn">You're <strong>#${me.waitlistPos}</strong> on the waitlist.</div><p class="hint" style="margin:10px 0 0">When someone drops out, the person at the top of the waitlist gets their spot automatically.</p><button class="btn ghost sm" id="leave" style="margin-top:12px">Leave waitlist</button>`;
+    if (me.vote && !pollOpen(l) && !me.requested) {
+      const picked = l.poll.options.find((o) => o.id === l.poll.decidedId);
+      const said = me.vote[l.poll.decidedId];
+      return `<div class="notice">${said === 'maybe' ? `You said <strong>Maybe</strong> to ${esc(pollOptText(picked, false))}.` : `${esc(pollOptText(picked, false))} was picked.`}</div>
+        <p class="hint" style="margin:10px 0 0">${full ? "The lobby is full. If you're coming, join the waitlist and you'll get the next spot that opens." : "There's a spot open. If you're coming, take it."}</p>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="join">${full ? 'Join the waitlist' : "I'm in"}</button><button class="btn ghost sm" id="leave">Not coming</button></div>`;
+    }
     const changeVote = me.vote && pollOpen(l) ? '<button class="btn sm" id="vote">Change my dates</button>' : '';
     if (me.requested) return `<div class="notice warn">Request sent — waiting for a host to approve.</div><div class="row" style="margin-top:12px">${changeVote}<button class="btn ghost sm" id="leave">Cancel request</button></div>`;
     if (me.vote && pollOpen(l)) return `<div class="notice ok">Your dates are in ✓</div><p class="hint" style="margin:10px 0 0">Once a date is picked, people who said Yes to it get spots first, in the order they answered. You'll be added (or put on the waitlist) automatically.</p><div class="row" style="margin-top:12px">${changeVote}<button class="btn ghost sm" id="leave">Leave</button></div>`;
@@ -1651,6 +1658,7 @@ async function viewLobby(id) {
               ${!l.recurrence && slotsLeft > 8 ? `<div class="dim">+ ${slotsLeft - 8} more open slots</div>` : ''}
             </div>
             ${l.waitlist?.length ? `<h3 class="waitlist-head">Waitlist (${l.waitlist.length})</h3><p class="hint" style="margin:0 0 8px">First in line gets the next open spot.</p><div class="member-list">${l.waitlist.map((u, i) => `<div class="member"><span class="row" style="gap:8px"><span class="dim">${i + 1}.</span>${userLine(u, 30)}</span>${me.isManager ? `<button class="btn ghost sm" data-kick="${esc(u.id)}">Remove</button>` : ''}</div>`).join('')}</div>` : ''}
+            ${l.maybes?.length ? `<h3 class="waitlist-head">Maybe (${l.maybes.length})</h3><p class="hint" style="margin:0 0 8px">Said Maybe to the picked date. Not in the lobby or the waitlist unless they join.</p><div class="member-list">${l.maybes.map((u) => `<div class="member">${userLine(u, 30)}</div>`).join('')}</div>` : ''}
           </div>
         </div>
         <aside class="side-stack">
@@ -1682,7 +1690,7 @@ async function viewLobby(id) {
       const spots = Math.max(0, l.maxSlots - l.memberCount);
       const ok = await askConfirm({
         title: `Pick ${pollOptText(o, false)}?`,
-        message: `The poll closes and this becomes the lobby's date. ${o.yes} said Yes and ${o.maybe} said Maybe. The first ${spots} of them get spots (Yes first, in the order they answered), and the rest go on the waitlist. People who said No aren't added.`,
+        message: `The poll closes and this becomes the lobby's date. ${o.yes} said Yes: the first ${spots} of them get spots, in the order they answered, and the rest go on the waitlist. The ${o.maybe} who said Maybe aren't added; they can join or line up themselves. People who said No aren't added.`,
         confirmLabel: 'Pick this date',
       });
       if (!ok) return;
@@ -1694,7 +1702,7 @@ async function viewLobby(id) {
       const r = await api('POST', `${base}/join`, { answers, vote });
       l = r.lobby; render();
       const m = r.lobby.me;
-      toast(m.isMember ? 'Joined!' : m.requested ? 'Request sent' : m.waitlistPos ? `You're #${m.waitlistPos} on the waitlist` : m.vote ? 'Thanks! Your dates are in.' : 'Done');
+      toast(m.isMember ? "You're in!" : m.requested ? 'Request sent' : m.waitlistPos ? `You're #${m.waitlistPos} on the waitlist` : m.vote ? 'Thanks! Your dates are in.' : 'Done');
       refreshInboxCount().then(() => renderNav(currentRoute));
       return r;
     });

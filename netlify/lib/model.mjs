@@ -400,8 +400,9 @@ export function fillFromWaitlist(l, nowMs = Date.now()) {
 // and let people say Yes / Maybe / No to each when they join or ask to join.
 // The date is picked by the host, or automatically once enough people answered or
 // on a set date: the one with the most Yes (then most Maybe, then the earliest).
-// Yes-voters fill the spots in the order they answered, then Maybes fill any spots
-// left; everyone else who said Yes or Maybe goes on the waitlist in that order.
+// Yes-voters fill the spots in the order they answered; the rest of them go on the
+// waitlist in that order. Maybes aren't seated or put in line: they stay around and
+// can join (or join the waitlist) themselves if they decide they're coming.
 
 export const POLL_DECIDE = ['manual', 'responses', 'deadline'];
 export const POLL_CHOICES = ['yes', 'maybe', 'no'];
@@ -490,8 +491,8 @@ export function pollDue(l, nowMs = Date.now()) {
 }
 
 /**
- * Set the lobby's date to one poll option and seat people: Yes-voters in the order
- * they answered, then Maybes, until the spots run out; the rest go on the waitlist.
+ * Set the lobby's date to one poll option and seat the people who said Yes, in the
+ * order they answered, until the spots run out; the rest of them go on the waitlist.
  * by = the host's id, or 'auto'.
  */
 export function decidePoll(l, optionId, by) {
@@ -510,16 +511,25 @@ export function decidePoll(l, optionId, by) {
     if (l.memberIds.length < l.maxSlots) l.memberIds.push(uid);
     else l.waitlist.push(uid);
   };
-  const result = { added: [], waitlisted: [], dropped: [] };
+  const result = { added: [], waitlisted: [], maybe: [], dropped: [] };
   for (const v of votes) if (v.picks[o.id] === 'yes') seat(v.uid);
-  for (const v of votes) if (v.picks[o.id] === 'maybe') seat(v.uid); // Maybes only get spots no Yes needed
   for (const v of votes) {
     if (l.memberIds.includes(v.uid)) result.added.push(v.uid);
     else if (l.waitlist.includes(v.uid)) result.waitlisted.push(v.uid);
+    else if (v.picks[o.id] === 'maybe') result.maybe.push(v.uid);
     else result.dropped.push(v.uid);
   }
   for (const uid of result.dropped) delete l.answers?.[uid];
   return result;
+}
+
+/** After the pick: people who said Maybe to the picked date and haven't joined or lined up. */
+export function pollMaybes(l) {
+  const p = l.poll;
+  if (!p?.decidedId) return [];
+  return countedVotes(l)
+    .filter((v) => v.picks[p.decidedId] === 'maybe' && !l.memberIds.includes(v.uid) && !l.waitlist.includes(v.uid))
+    .map((v) => v.uid);
 }
 
 /** A poll option as text, e.g. "Fri, Dec 4, 7:00 PM" (times in the given zone). */

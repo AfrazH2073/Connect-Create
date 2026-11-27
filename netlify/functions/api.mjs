@@ -10,7 +10,7 @@ import {
   PLATFORMS, LOBBY_PLATFORMS, CATEGORIES, VISIBILITIES, BANNERS, REPEATS, HttpError, fail, str, pick, idList, cleanHandle, platformUrl,
   parseMedia, newId, newCode, now, publicUser, miniUser, isManager, isMember, canView,
   cleanQuestions, checkAnswers, repeatKey, validTimeZone, dateKey, aheadOf, DEFAULT_AHEAD, MAX_AHEAD, syncSessionSchedule, nextSession, isPast, snapTo5Min, endOf,
-  isWaitlisted, hasVoted, fillFromWaitlist, cleanPoll, checkVote, countedVotes, pollTally, pollDue, pollWinner, decidePoll,
+  isWaitlisted, hasVoted, fillFromWaitlist, cleanPoll, checkVote, countedVotes, pollTally, pollDue, pollWinner, decidePoll, pollMaybes,
 } from '../lib/model.mjs';
 
 // ---------- helpers ----------
@@ -552,7 +552,10 @@ function lobbyDetail(l, uid, people) {
       answers: uid && l.answers?.[uid] ? l.answers[uid].items : null,
       waitlistPos: isWaitlisted(l, uid) ? l.waitlist.indexOf(uid) + 1 : null,
       vote: hasVoted(l, uid) ? l.poll.votes[uid].picks : null,
+      // Answered the poll and was let in (approved / had the code), but isn't in the lobby or the line
+      maybe: !!uid && pollMaybes(l).includes(uid),
     },
+    maybes: pollMaybes(l).map((id) => miniUser(people[id])).filter(Boolean),
     waitlist: (l.waitlist || []).map((id) => miniUser(people[id])).filter(Boolean),
     poll: l.poll ? pollView(l, people, manager) : null,
     requestCount: l.requestIds.length,
@@ -888,7 +891,11 @@ async function lobbyAction(ctx, req, id, action, arg, b) {
         if (polling()) { takeVote(); removeFrom('invitedIds', me.id); return; }
         seat(me.id);
       };
+      // Said Maybe (or wasn't seated) when the date was picked: they already got past
+      // approval / the code and answered the questions, so they go straight in or in line.
+      const answeredBefore = !!l.poll?.decidedId && hasVoted(l, me.id) && !l.requestIds.includes(me.id);
       if (changingVote) takeVote();
+      else if (answeredBefore) seat(me.id);
       else if (manager) { if (polling()) takeVote(); else seat(me.id); }
       // With approval on, everyone else (invited people and friends too) asks and a host decides.
       else if (l.approval) { takeAnswers(); if (polling()) takeVote(); if (!l.requestIds.includes(me.id)) l.requestIds.push(me.id); }
